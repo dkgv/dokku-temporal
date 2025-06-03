@@ -1,0 +1,123 @@
+# Temporal configuration management
+
+# Show current configuration
+temporal:config() {
+    local app_name="${1:-temporal}"
+    
+    # Check if app exists
+    if ! dokku apps:exists "$app_name"; then
+        echo "App '$app_name' does not exist"
+        return 1
+    fi
+    
+    # Get configuration variables
+    dokku config:get "$app_name" TEMPORAL_CONFIG
+    
+    # If no config is set, show default config
+    if [ $? -ne 0 ]; then
+        echo "No Temporal configuration found for app '$app_name'. Using default configuration:"
+        cat "$PLUGIN_PATH/temporal-config.yaml"
+    fi
+}
+
+# Set Temporal configuration
+temporal:config:set() {
+    local app_name="${1:-temporal}"
+    local config_file="$2"
+    
+    if [ -z "$config_file" ]; then
+        echo "Usage: temporal:config:set <app> <config-file>"
+        return 1
+    fi
+    
+    if [ ! -f "$config_file" ]; then
+        echo "Config file '$config_file' not found"
+        return 1
+    fi
+    
+    # Create PostgreSQL service if it doesn't exist
+    if ! dokku postgres:list | grep -q "temporal"; then
+        dokku postgres:create temporal
+        dokku postgres:link temporal $app_name
+    fi
+    
+    # Set the configuration as an environment variable
+    dokku config:set "$app_name" TEMPORAL_CONFIG="$(cat "$config_file")"
+    
+    # Create required volumes if they don't exist
+    dokku volumes:create temporal-es-data
+    dokku volumes:create prometheus-data
+    dokku volumes:create grafana-data
+    
+    echo "Temporal configuration set for app '$app_name'"
+}
+
+# Get specific config value
+temporal:config:get() {
+    local app_name="${1:-temporal}"
+    local key="$2"
+    
+    if [ -z "$key" ]; then
+        echo "Usage: temporal:config:get <app> <key>"
+        return 1
+    fi
+    
+    # Get the full config
+    local config=$(dokku config:get "$app_name" TEMPORAL_CONFIG)
+    
+    if [ $? -ne 0 ]; then
+        echo "No configuration found for app '$app_name'"
+        return 1
+    fi
+    
+    # Extract the value using yq (yaml processor)
+    echo "$config" | yq e ".temporal.$key" -
+}
+
+# Get Temporal Web UI URL
+temporal:config:web-ui() {
+    local app_name="${1:-temporal}"
+    echo "http://$(dokku domains:report $app_name --domain)"
+}
+
+# Get Prometheus URL
+temporal:config:prometheus() {
+    local app_name="${1:-temporal}"
+    echo "http://$(dokku domains:report $app_name --domain):9090"
+}
+
+# Get Grafana URL
+temporal:config:grafana() {
+    local app_name="${1:-temporal}"
+    echo "http://$(dokku domains:report $app_name --domain):8085"
+}
+
+# Show config help
+temporal:config:help() {
+    cat << EOF
+Usage: temporal:config [command] [args]
+
+Available commands:
+    config              Show current Temporal configuration
+    config:set          Set Temporal configuration from a file
+    config:get          Get specific configuration value
+    config:web-ui       Get Temporal Web UI URL
+    config:prometheus   Get Prometheus URL
+    config:grafana      Get Grafana URL
+
+Examples:
+    # Show current configuration
+dokku temporal:config temporal
+
+    # Set configuration from file
+dokku temporal:config:set temporal /path/to/config.yaml
+
+    # Get specific config value
+dokku temporal:config:get temporal server.image
+
+    # Get URLs
+dokku temporal:config:web-ui temporal
+dokku temporal:config:prometheus temporal
+dokku temporal:config:grafana temporal
+EOF
+}

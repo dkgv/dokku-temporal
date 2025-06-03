@@ -9,24 +9,23 @@ temporal:start() {
         return 1
     fi
 
-    # Get database connection info
-    local db_info=$(get_db_connection_info $service_name)
-    local db_host=$(echo "$db_info" | grep DB_HOST | cut -d'=' -f2)
-    local db_port=$(echo "$db_info" | grep DB_PORT | cut -d'=' -f2)
-    local db_name=$(echo "$db_info" | grep DB_NAME | cut -d'=' -f2)
-    local db_user=$(echo "$db_info" | grep DB_USER | cut -d'=' -f2)
-    local db_password=$(echo "$db_info" | grep DB_PASSWORD | cut -d'=' -f2)
+    # Get all environment variables for the service
+    local env_args=""
+    while IFS= read -r line; do
+        # Skip empty lines
+        [ -z "$line" ] && continue
+        # Escape any embedded double quotes in the value
+        local key=$(echo "$line" | cut -d'=' -f1)
+        local value=$(echo "$line" | cut -d'=' -f2-)
+        env_args+=" -e ${key}=${value}"
+    done < <(dokku config:export "$service_name")
 
-    # Start Temporal server with database connection
+    # Start Temporal server with all environment variables
     docker run -d \
         --name "temporal-server-$service_name" \
         --network temporal-network \
         -p 7233:7233 \
-        -e TEMPORAL_DB_HOST=$db_host \
-        -e TEMPORAL_DB_PORT=$db_port \
-        -e TEMPORAL_DB_NAME=$db_name \
-        -e TEMPORAL_DB_USER=$db_user \
-        -e TEMPORAL_DB_PASSWORD=$db_password \
+        $env_args \
         temporalio/auto-setup:latest
 
     echo "Temporal service '$service_name' started"

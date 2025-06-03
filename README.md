@@ -22,7 +22,62 @@ dokku plugin:install https://github.com/your-repo/dokku-temporal.git temporal
 
 ## Configuration
 
-See [config.md](config.md) for detailed configuration options and environment variables.
+The Temporal service can be configured using a YAML configuration file that defines the service's components and their settings. The configuration file is optional - if not provided, the service will use default settings.
+
+### Default Configuration
+
+When no configuration file is provided, the service will use the following default settings:
+- Core Temporal server with gRPC ports (7233 and 7234)
+- Optional Web UI (port 8080)
+- Optional metrics stack (Prometheus and Grafana)
+- PostgreSQL database (managed by Dokku's postgres plugin)
+- Elasticsearch for visibility
+
+### Custom Configuration
+
+To customize the Temporal service, create a YAML configuration file with your desired settings. The configuration file should follow the structure defined in [temporal-config.yaml](temporal-config.yaml).
+
+```bash
+# Create a Temporal service with custom configuration
+dokku temporal:create my-temporal --config /path/to/config.yaml
+```
+
+### Available Configuration Options
+
+The configuration file can specify:
+- Core Temporal server settings
+- Database connection settings (automatically managed by Dokku's database plugin)
+- Elasticsearch configuration
+- Optional UI settings
+- Optional metrics stack (Prometheus and Grafana)
+- Network settings
+- Volume configurations
+- Security settings
+
+### Example Usage
+
+```bash
+# Create a Temporal service with default configuration
+dokku temporal:create my-temporal
+
+# Create with custom configuration
+dokku temporal:create my-temporal --config /path/to/config.yaml
+
+# View current configuration
+dokku temporal:config my-temporal
+
+# Get specific configuration value
+dokku temporal:config:get my-temporal server.image
+
+# Get UI URL
+dokku temporal:config:web-ui my-temporal
+
+# Get Prometheus URL
+dokku temporal:config:prometheus my-temporal
+
+# Get Grafana URL
+dokku temporal:config:grafana my-temporal
+```
 
 ## Usage
 
