@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 
 # Temporal logs command
-
 temporal:logs() {
     local service_name="$1"
     local tail_num="${2:-100}"
@@ -10,9 +9,46 @@ temporal:logs() {
         return 1
     fi
 
-    echo "Temporal Server Logs:"
-    docker logs "temporal-server-$service_name" --tail "$tail_num"
-    echo ""
-    echo "Database Logs:"
-    docker logs "temporal-db-$service_name" --tail "$tail_num"
+    local container_name="temporal-server-$service_name"
+    
+    # Check if the Temporal server container exists
+    if docker ps -a --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        echo "Temporal Server Logs:"
+        docker logs "$container_name" --tail "$tail_num" 2>&1
+    else
+        echo "Error: Temporal server container '$container_name' not found."
+        echo "Available containers:"
+        docker ps -a --format "table {{.Names}}\t{{.Status}}" | grep temporal || echo "  No temporal containers found"
+        echo ""
+        echo "Try starting the service first: dokku temporal:start $service_name"
+        return 1
+    fi
+    
+    # Optionally show PostgreSQL logs if requested with --db flag or if Temporal logs show DB issues
+    if [ "${3:-}" = "--db" ] || [ "${2:-}" = "--db" ]; then
+        echo ""
+        echo "PostgreSQL Database Logs:"
+        
+        # Find the PostgreSQL container name
+        local db_container_name=""
+        local possible_names=(
+            "dokku.postgres.$service_name"
+            "dokku-postgres-$service_name"
+            "postgres-$service_name"
+            "$service_name.postgres"
+        )
+        
+        for name in "${possible_names[@]}"; do
+            if docker inspect "$name" >/dev/null 2>&1; then
+                db_container_name="$name"
+                break
+            fi
+        done
+        
+        if [ -n "$db_container_name" ]; then
+            docker logs "$db_container_name" --tail "$tail_num" 2>&1
+        else
+            echo "PostgreSQL container not found. Tried: ${possible_names[*]}"
+        fi
+    fi
 }

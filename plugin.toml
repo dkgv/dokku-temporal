@@ -4,22 +4,8 @@ description = "Dokku plugin for managing Temporal workflow platform"
 version = "0.1.0" # Ensure this matches the content of your ./VERSION file
 
 [commands]
-# Explicitly map the main plugin command.
-# When 'dokku temporal ...' is run, Dokku executes './commands temporal...'
-# The './commands' script then calls its internal 'temporal' function.
-# The value "temporal" here refers to the prefix Dokku expects for the command passed to the script.
-# This line may not be strictly necessary if the command passed to the script is already "temporal:subcommand",
-# but it can help clarify intent for Dokku's parser.
-# Given our findings, the crucial part is how './commands' handles $1.
-# Let's keep it simple, Dokku uses the plugin name. The logic in './commands' handles the "temporal:" prefix.
-
-# Subcommands:
-# The key is what the user types after "dokku temporal " (e.g., "create", "config:get")
-# The value is what your 'temporal()' function in './commands' will receive as its first argument ($original_subcommand)
-# which is then used to form the shell function to call (e.g., "temporal:create", "temporal:config:get")
-
 # Core lifecycle commands
-create = "temporal:create" # User: dokku temporal create => ./commands temporal:create => temporal("create") => temporal:create()
+create = "temporal:create"
 destroy = "temporal:destroy"
 start = "temporal:start"
 stop = "temporal:stop"
@@ -40,12 +26,12 @@ link = "temporal:link"
 unlink = "temporal:unlink"
 
 # Configuration commands (keys with colons MUST be quoted)
-"config" = "temporal:config"                 # User: dokku temporal config => ./commands temporal:config => temporal("config") => temporal:config()
-"config:get" = "temporal:config:get"         # User: dokku temporal config:get => ./commands temporal:config:get => temporal("config:get") => temporal:config:get()
+"config" = "temporal:config"
+"config:get" = "temporal:config:get"
 "config:set" = "temporal:config:set"
 "config:web-ui" = "temporal:config:web-ui"
 "config:prometheus" = "temporal:config:prometheus"
 "config:grafana" = "temporal:config:grafana"
 
 # Help command (standard practice)
-help = "temporal:help" # User: dokku temporal help => ./commands temporal:help => temporal("help") => temporal:help()
+help = "temporal:help"

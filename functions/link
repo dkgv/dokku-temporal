@@ -1,24 +1,75 @@
 #!/usr/bin/env bash
 
-# Temporal link command
-
+# temporal:link <service_name> <app_name>
 temporal:link() {
     local service_name="$1"
     local app_name="$2"
-    
-    if [ -z "$service_name" ] || [ -z "$app_name" ]; then
-        echo "Usage: dokku temporal:link <service> <app>"
+    echo "DEBUG: [temporal:link] Called for service '$service_name', app '$app_name'." >&2
+
+    if ! validate_service_name "$service_name" "link"; then return 1; fi
+    if [ -z "$app_name" ]; then
+        echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:link <service_name> <app_name>"
         return 1
     fi
 
-    # Add environment variables to app
-    local db_type=$(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")
-    dokku config:set $app_name \
-        TEMPORAL_SERVICE_NAME=$service_name \
-        TEMPORAL_DB_TYPE=$db_type
+    # Check if Temporal service exists
+    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    local db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$db_type" ]; then
+        echo "Error: Temporal service '$service_name' not found or not configured."
+        return 1
+    fi
 
-    # Add to linked apps list
-    add_linked_app "$app_name"
+    # Check if app exists
+    if ! dokku apps:exists "$app_name" >/dev/null 2>&1; then # Assuming apps:exists is quiet or redirecting
+        echo "Error: Dokku app '$app_name' does not exist."
+        return 1
+    fi
 
-    echo "Linked Temporal service '$service_name' to app '$app_name'"
+    echo "Linking Temporal service '$service_name' (type: $db_type) to app '$app_name'..."
+
+    # Get connection info for the underlying datastore
+    # This uses the get_db_connection_info from common.sh
+    local connection_info
+    connection_info=$(get_db_connection_info "$service_name")
+    if [ $? -ne 0 ] || [ -z "$connection_info" ]; then
+        echo "Error: Could not retrieve database connection info for '$service_name'."
+        return 1
+    fi
+    echo "DEBUG: [temporal:link] Retrieved connection info: $connection_info"
+
+    # Set environment variables on the app
+    # Example TEMPORAL_HOST might be the Dokku host or a service-specific address
+    # For now, let's assume direct connection to Temporal server on default gRPC port
+    # This needs more thought based on how 'temporal:start' exposes the service.
+    # If 'temporal:start' uses Docker port mapping, TEMPORAL_GRPC_ADDRESS would be something like dokku-host-ip:port
+    # For now, placeholders. Crucially, the DB link for Temporal server itself is internal.
+    # The app needs to know how to reach the Temporal Frontend Service.
+    # This example assumes temporal server runs on the host mapped to 7233.
+    # A better way: `dokku temporal:urls <service_name>` to get client-usable URLs.
+
+    # Standard Dokku practice is to link the *datastore* to the app,
+    # then the app uses that to connect to Temporal, which then connects to the datastore.
+    # Or, if Temporal server is also a "service" for the app:
+    local dokku_host_ip=$(dokku config:get --global DOKKU_HOSTNAME || hostname -I | awk '{print $1}') # Simplistic
+    local temporal_address="$dokku_host_ip:7233" # Assuming default port and direct host access after 'start'
+
+    echo "Setting environment variables on app '$app_name'..."
+    dokku config:set --no-restart "$app_name" \
+        "TEMPORAL_ADDRESS=$temporal_address" \
+        "TEMPORAL_NAMESPACE=default" # Or make namespace configurable
+
+    # Link the underlying datastore (e.g., postgres) to the app if Temporal SDKs need it directly
+    # OR if the app itself is a Temporal worker/client that configures its own DB connection
+    # This depends on the use case. Often, apps only talk to Temporal frontend, not its DB.
+    # For now, let's assume app only needs TEMPORAL_ADDRESS.
+    # If the actual *Temporal server components* were running as part of an "app",
+    # then you'd use 'dokku postgres:link $service_name $temporal_server_app_name'.
+
+    # Add to your plugin's global list of linked apps
+    add_linked_app "$service_name" "$app_name"
+
+    echo "Successfully linked Temporal service '$service_name' to app '$app_name'."
+    echo "App '$app_name' may need to be restarted to pick up new environment variables."
+    return 0
 }

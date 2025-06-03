@@ -4,15 +4,13 @@
 
 echo "DEBUG: [./functions/common] Sourced." >&2
 
-# Check if a database plugin exists
-# In functions/common
-
+# Check if a database plugin exists by checking its 'commands' script
 check_db_plugin() {
     local db_type="$1"
     echo "DEBUG: [check_db_plugin] Checking for existence and executability of '$db_type' plugin's command script." >&2
 
-    local target_plugin_commands_script="$PLUGIN_ENABLED_PATH/$db_type/commands"
     # PLUGIN_ENABLED_PATH is exported by Dokku's environment, e.g., /var/lib/dokku/plugins/enabled
+    local target_plugin_commands_script="$PLUGIN_ENABLED_PATH/$db_type/commands"
 
     echo "DEBUG: [check_db_plugin] Target script path: $target_plugin_commands_script" >&2
 
@@ -26,46 +24,53 @@ check_db_plugin() {
         elif [ ! -x "$target_plugin_commands_script" ]; then
             echo "DEBUG: [check_db_plugin] Command script for '$db_type' FOUND but NOT EXECUTABLE at $target_plugin_commands_script." >&2
         fi
+        # User-facing error message
         echo "Error: $db_type plugin is not installed or not correctly enabled (commands script missing or not executable)."
         return 1
     fi
 }
 
-# Get database connection info
+# Get database connection info (uses prefixed global var for db_type)
 get_db_connection_info() {
     local service_name="$1"
+    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
     local db_type
-    db_type=$(dokku config:get "$service_name" TEMPORAL_DB_TYPE 2>/dev/null)
+    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
     local db_type_rc=$?
-    echo "DEBUG: [get_db_connection_info] For service '$service_name', db_type from config: '$db_type' (rc=$db_type_rc)" >&2
-    if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then
-        echo "DEBUG: [get_db_connection_info] TEMPORAL_DB_TYPE not found or empty for '$service_name', defaulting to 'postgres' for info purposes" >&2
-        # This is tricky; if create didn't set it, what should this do?
-        # For now, let's assume it might be called before db_type is set and proceed cautiously or default.
-        # It's better if create *always* sets TEMPORAL_DB_TYPE.
-        # For this function, let's assume it's a valid, existing service.
-        db_type=$(dokku config:get "$service_name" TEMPORAL_DB_TYPE) # Re-fetch without 2>/dev/null if we expect it
-    fi
+    echo "DEBUG: [get_db_connection_info] For service '$service_name', db_type from global config '$service_config_db_type_var': '$db_type' (rc=$db_type_rc)" >&2
 
+    if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then
+        echo "Warning: [get_db_connection_info] $service_config_db_type_var not found or empty for '$service_name'. Cannot reliably get DB info." >&2
+        return 1 # Cannot proceed without knowing db_type
+    fi
 
     echo "DEBUG: [get_db_connection_info] Using db_type '$db_type' to fetch Dokku db info for '$service_name'" >&2
     local db_info
-    db_info=$(dokku "$db_type":info "$service_name" --quiet) # Add --quiet if available and desired
+    db_info=$(dokku "$db_type":info "$service_name" --dsn 2>/dev/null || dokku "$db_type":info "$service_name" --quiet 2>/dev/null)
     local db_info_rc=$?
-    if [ $db_info_rc -ne 0 ]; then
-        echo "Error: Could not get DB info for '$service_name' using type '$db_type'. 'dokku $db_type:info $service_name' failed." >&2
+
+    if [ $db_info_rc -ne 0 ] || [ -z "$db_info" ]; then
+        echo "Error: Could not get DB info for '$service_name' using type '$db_type'. 'dokku $db_type:info $service_name' failed or returned empty." >&2
         return 1
     fi
-    echo "DEBUG: [get_db_connection_info] Raw db_info: $db_info" >&2
+    echo "DEBUG: [get_db_connection_info] Raw db_info/DSN: $db_info" >&2
 
-    # Robust DSN parsing needed here. The example below is fragile.
-    # Example for PostgreSQL DSN: postgres://user:pass@host:port/dbname
-    local db_host=$(echo "$db_info" | grep -oP "(?<=@)[^:]+(?=:\d+/)" || echo "PARSE_ERROR_HOST")
-    local db_port=$(echo "$db_info" | grep -oP "(?<=:)\d+(?=/\w+)" || echo "PARSE_ERROR_PORT")
-    local db_name=$(echo "$db_info" | grep -oP "(?<=/\w+\?)\w+|(?<=/)\w+(?=\s|$)" | tail -n1 || echo "PARSE_ERROR_DBNAME") # Simpler for last path component
-    local db_user=$(echo "$db_info" | grep -oP "(?<=//)[^:]+(?=:[^@]+@)" || echo "PARSE_ERROR_USER")
-    local db_password=$(echo "$db_info" | grep -oP "(?<=:)[^@]+(?=@)" || echo "PARSE_ERROR_PASS")
-
+    local db_scheme db_user db_password db_host db_port db_name
+    if [[ "$db_info" =~ ([^:]+)://([^:]*):([^@]*)@([^:]+):([0-9]+)/([^?]+) ]]; then # Made user/pass parsing more robust for empty values
+        db_scheme="${BASH_REMATCH[1]}"
+        db_user="${BASH_REMATCH[2]}"
+        db_password="${BASH_REMATCH[3]}"
+        db_host="${BASH_REMATCH[4]}"
+        db_port="${BASH_REMATCH[5]}"
+        db_name="${BASH_REMATCH[6]}"
+    else
+        echo "Warning: [get_db_connection_info] Could not parse DSN '$db_info' for '$service_name'. Manual parsing or different format needed." >&2
+        db_host="PARSE_ERROR_HOST"
+        db_port="PARSE_ERROR_PORT"
+        db_name="PARSE_ERROR_DBNAME"
+        db_user="PARSE_ERROR_USER"
+        db_password="PARSE_ERROR_PASS"
+    fi
 
     echo "DB_HOST=$db_host"
     echo "DB_PORT=$db_port"
@@ -77,64 +82,95 @@ get_db_connection_info() {
 # Validate service name
 validate_service_name() {
     local service_name="$1"
-    local cmd="$2" # e.g., "info", "create"
+    local cmd="$2"
     echo "DEBUG: [validate_service_name] Called for service_name='$service_name', cmd='$cmd'" >&2
     if [ -z "$service_name" ]; then
-        # Usage messages should go to STDOUT so user sees them.
         echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:$cmd <service_name>"
         return 1
     fi
-    # Could add further validation: check if service actually exists via dokku config?
-    # For now, just checking if name is provided.
-    echo "DEBUG: [validate_service_name] Service name '$service_name' provided." >&2
+    # Add regex check for valid service name characters (e.g., alphanumeric, dash)
+    if [[ ! "$service_name" =~ ^[a-zA-Z0-9][a-zA-Z0-9_-]*$ ]]; then
+        echo "Error: Invalid service name '$service_name'. Name must start with alphanumeric and contain only alphanumeric, underscore, or hyphen."
+        return 1
+    fi
+    echo "DEBUG: [validate_service_name] Service name '$service_name' provided and format is valid." >&2
     return 0
 }
 
-# Add service to global list (consider if this is the best way to track services)
+# Add service to global list of TEMPORAL_SERVICES
 add_service() {
     local service_name="$1"
-    echo "DEBUG: [add_service] Adding '$service_name'" >&2
-    # This append logic can lead to duplicates if not careful or if '.' is the first char
+    echo "DEBUG: [add_service] Adding '$service_name' to TEMPORAL_SERVICES" >&2
     local current_services
     current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)
-    if [[ "$current_services" != *"$service_name"* ]]; then # Simple check
-        dokku config:set --global TEMPORAL_SERVICES="${current_services}${current_services:+.}$service_name"
+    if [[ ".${current_services}." != *".${service_name}."* ]]; then
+        if [ -z "$current_services" ]; then
+            dokku config:set --global --no-restart TEMPORAL_SERVICES="$service_name"
+        else
+            dokku config:set --global --no-restart TEMPORAL_SERVICES="${current_services}.${service_name}"
+        fi
+    else
+        echo "DEBUG: [add_service] '$service_name' already in TEMPORAL_SERVICES." >&2
     fi
 }
 
-# Remove service from global list
+# Remove service from global list of TEMPORAL_SERVICES
 remove_service() {
     local service_name="$1"
-    echo "DEBUG: [remove_service] Removing '$service_name'" >&2
+    echo "DEBUG: [remove_service] Removing '$service_name' from TEMPORAL_SERVICES" >&2
     local current_services
     current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)
-    # More robust removal needed (handles beginning, middle, end, only item)
-    # This simple sed might leave leading/trailing dots or double dots.
-    # Example: current_services=".s1.s2.s3." remove s2 => ".s1..s3."
-    # A better way: convert to array, remove, join back, or use more complex sed.
-    # For now, simple approach:
-    local updated_services=$(echo "$current_services" | tr '.' '\n' | grep -v "^${service_name}$" | tr '\n' '.' | sed 's/\.$//') # Remove trailing dot
-    if [ -z "$updated_services" ] && [[ "$current_services" == "$service_name" ]]; then # If it was the only one
+    if [ -z "$current_services" ]; then
+      echo "DEBUG: [remove_service] TEMPORAL_SERVICES is empty, nothing to remove." >&2
+      return
+    fi
+
+    local IFS='.'
+    read -ra services_array <<< "$current_services"
+    local updated_services_array=()
+    local found=0
+    for s in "${services_array[@]}"; do
+        if [[ "$s" == "$service_name" ]]; then
+            found=1
+        else
+            updated_services_array+=("$s")
+        fi
+    done
+    local IFS=$' \t\n'
+
+    if [ "$found" -eq 0 ]; then
+        echo "DEBUG: [remove_service] Service '$service_name' not found in TEMPORAL_SERVICES." >&2
+        return
+    fi
+
+    if [ ${#updated_services_array[@]} -eq 0 ]; then
         dokku config:unset --global TEMPORAL_SERVICES
-    elif [ "$current_services" != "$updated_services" ]; then
-        dokku config:set --global TEMPORAL_SERVICES "$updated_services"
+        echo "DEBUG: [remove_service] TEMPORAL_SERVICES is now empty." >&2
+    else
+        local updated_services_string
+        printf -v updated_services_string '.%s' "${updated_services_array[@]}"
+        updated_services_string=${updated_services_string#.}
+        dokku config:set --global --no-restart TEMPORAL_SERVICES "$updated_services_string"
+        echo "DEBUG: [remove_service] TEMPORAL_SERVICES updated to '$updated_services_string'." >&2
     fi
 }
 
-# Add app to linked apps list for a service (rethinking this global var)
-# It's usually better to store links on the *app's* config or the *service's* config.
-# dokku <service>:links <app_name> is a common pattern for Dokku datastores.
-# Global TEMPORAL_LINKED_APPS might become hard to manage.
+# Add app to linked apps list (global TEMPORAL_LINKED_APPS)
 add_linked_app() {
     local service_name="$1" # Argument order from README is service then app
     local app_name="$2"
-    echo "DEBUG: [add_linked_app] Linking service '$service_name' to app '$app_name'" >&2
-    # Storing as service_name:app_name might be okay for a global list.
+    echo "DEBUG: [add_linked_app] Linking service '$service_name' to app '$app_name' in TEMPORAL_LINKED_APPS" >&2
     local current_links
     current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)
-    local new_link="$service_name:$app_name"
-    if [[ "$current_links" != *"$new_link"* ]]; then
-        dokku config:set --global TEMPORAL_LINKED_APPS="${current_links}${current_links:+.}$new_link"
+    local new_link="${service_name}:${app_name}" # Format: service:app
+    if [[ ".${current_links}." != *".${new_link}."* ]]; then
+        if [ -z "$current_links" ]; then
+            dokku config:set --global --no-restart TEMPORAL_LINKED_APPS="$new_link"
+        else
+            dokku config:set --global --no-restart TEMPORAL_LINKED_APPS="${current_links}.${new_link}"
+        fi
+    else
+        echo "DEBUG: [add_linked_app] Link '$new_link' already in TEMPORAL_LINKED_APPS." >&2
     fi
 }
 
@@ -142,24 +178,54 @@ add_linked_app() {
 remove_linked_app() {
     local service_name="$1"
     local app_name="$2"
-    echo "DEBUG: [remove_linked_app] Unlinking service '$service_name' from app '$app_name'" >&2
+    local link_to_remove="${service_name}:${app_name}"
+    echo "DEBUG: [remove_linked_app] Unlinking '$link_to_remove' from TEMPORAL_LINKED_APPS" >&2
     local current_links
     current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)
-    local link_to_remove="$service_name:$app_name"
-    # Similar robust removal needed as for remove_service
-    local updated_links=$(echo "$current_links" | tr '.' '\n' | grep -v "^${link_to_remove}$" | tr '\n' '.' | sed 's/\.$//')
-    if [ -z "$updated_links" ] && [[ "$current_links" == "$link_to_remove" ]]; then
+    if [ -z "$current_links" ]; then
+        echo "DEBUG: [remove_linked_app] TEMPORAL_LINKED_APPS is empty, nothing to remove." >&2
+        return
+    fi
+
+    local IFS='.'
+    read -ra links_array <<< "$current_links"
+    local updated_links_array=()
+    local found=0
+    for l in "${links_array[@]}"; do
+        if [[ "$l" == "$link_to_remove" ]]; then
+            found=1
+        else
+            updated_links_array+=("$l")
+        fi
+    done
+    local IFS=$' \t\n'
+
+    if [ "$found" -eq 0 ]; then
+        echo "DEBUG: [remove_linked_app] Link '$link_to_remove' not found in TEMPORAL_LINKED_APPS." >&2
+        return
+    fi
+
+    if [ ${#updated_links_array[@]} -eq 0 ]; then
         dokku config:unset --global TEMPORAL_LINKED_APPS
-    elif [ "$current_links" != "$updated_links" ]; then
-        dokku config:set --global TEMPORAL_LINKED_APPS "$updated_links"
+        echo "DEBUG: [remove_linked_app] TEMPORAL_LINKED_APPS is now empty." >&2
+    else
+        local updated_links_string
+        printf -v updated_links_string '.%s' "${updated_links_array[@]}"
+        updated_links_string=${updated_links_string#.}
+        dokku config:set --global --no-restart TEMPORAL_LINKED_APPS "$updated_links_string"
+        echo "DEBUG: [remove_linked_app] TEMPORAL_LINKED_APPS updated to '$updated_links_string'." >&2
     fi
 }
 
 # Get linked apps for a service
 get_linked_apps() {
     local service_name="$1"
-    echo "DEBUG: [get_linked_apps] Getting apps linked to '$service_name'" >&2
+    echo "DEBUG: [get_linked_apps] Getting apps linked to '$service_name' from TEMPORAL_LINKED_APPS" >&2
     local linked_apps_raw
     linked_apps_raw="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)"
-    echo "$linked_apps_raw" | tr '.' '\n' | grep "^$service_name:" | cut -d':' -f2-
+    if [ -n "$linked_apps_raw" ]; then
+        # Output each app on a new line
+        echo "$linked_apps_raw" | tr '.' '\n' | grep "^${service_name}:" | cut -d':' -f2-
+    fi
+    # If no links, outputs nothing
 }

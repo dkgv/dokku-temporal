@@ -3,60 +3,114 @@
 # temporal:create <service_name> [db_type]
 temporal:create() {
     local service_name="$1"
-    local db_type="${2:-postgres}"  # Default to postgres if not specified
+    local db_type="${2:-postgres}"
     echo "DEBUG: [temporal:create] Called with service_name='$service_name', db_type='$db_type'" >&2
 
     if ! validate_service_name "$service_name" "create"; then
         return 1
     fi
 
-    # Check if service already exists (e.g., by checking a config var)
-    if dokku config:has "$service_name" TEMPORAL_DB_TYPE >/dev/null 2>&1; then
-        echo "Error: Temporal service '$service_name' already exists."
+    # 1. Check if the Temporal service already exists
+    local config_var_name="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    echo "DEBUG: [temporal:create] Checking if $config_var_name is set globally..." >&2
+    local existing_temporal_db_type
+    existing_temporal_db_type=$(dokku config:get --global "$config_var_name" 2>/dev/null)
+    local config_get_rc=$?
+
+    if [ "$config_get_rc" -eq 0 ] && [ -n "$existing_temporal_db_type" ]; then
+        echo "Error: Temporal service '$service_name' already configured (found $config_var_name='$existing_temporal_db_type')."
+        echo "Hint: To re-create, first destroy it using 'dokku temporal:destroy $service_name'"
         return 1
     fi
-    echo "DEBUG: [temporal:create] Service '$service_name' does not yet exist. Proceeding." >&2
+    echo "DEBUG: [temporal:create] Temporal service '$service_name' not yet configured. Proceeding." >&2
 
-    # Validate database type and check if corresponding Dokku plugin exists
+    # 2. Validate database type and check if plugin is installed
     case "$db_type" in
-        postgres|mysql) # Added mysql here as per your original
-            if ! check_db_plugin "$db_type"; then # check_db_plugin prints its own error
+        postgres|mysql)
+            if ! check_db_plugin "$db_type"; then 
+                echo "Please install the $db_type plugin first:"
+                echo "dokku plugin:install https://github.com/dokku/dokku-$db_type.git $db_type"
                 return 1
             fi
             ;;
-        # cassandra was in README but not implemented in original create
         *)
-            echo "Error: Invalid or unsupported database type '$db_type'. Supported types: postgres, mysql."
+            echo "Error: Invalid or unsupported database type '$db_type'. Supported: postgres, mysql."
             return 1
             ;;
     esac
-    echo "DEBUG: [temporal:create] Database type '$db_type' is valid and plugin exists." >&2
+    echo "DEBUG: [temporal:create] Database type '$db_type' is valid and its plugin is installed." >&2
 
-    # Create Dokku datastore (e.g., PostgreSQL service)
-    echo "Creating $db_type datastore service: $service_name..."
-    if ! dokku "$db_type:create" "$service_name"; then
-        echo "Error: Failed to create $db_type service '$service_name'."
+    # 3. Create Docker network for Temporal services
+    local temporal_docker_network="temporal-network"
+    echo "DEBUG: [temporal:create] Ensuring Docker network '$temporal_docker_network' exists..."
+    if ! docker network inspect "$temporal_docker_network" >/dev/null 2>&1; then
+        echo "Info: Creating Docker network '$temporal_docker_network'..."
+        if docker network create "$temporal_docker_network"; then
+            echo "Docker network '$temporal_docker_network' created successfully."
+        else
+            echo "Error: Failed to create Docker network '$temporal_docker_network'."
+            return 1
+        fi
+    else
+        echo "Info: Docker network '$temporal_docker_network' already exists."
+    fi
+
+    # 4. Create underlying Dokku datastore
+    echo "DEBUG: [temporal:create] Checking if $db_type service '$service_name' exists..."
+    local db_exists=false
+    
+    # Try multiple ways to check if the service exists
+    if dokku "$db_type:exists" "$service_name" 2>/dev/null | grep -q "true"; then
+        db_exists=true
+    elif dokku "$db_type:info" "$service_name" >/dev/null 2>&1; then
+        db_exists=true
+    fi
+    
+    if [ "$db_exists" = true ]; then
+        echo "Info: Underlying $db_type service '$service_name' already exists. Will reuse it."
+    else
+        echo "Creating $db_type service '$service_name'..."
+        if ! dokku "$db_type:create" "$service_name"; then
+            echo "Error: Failed to create $db_type service '$service_name'."
+            echo "This is required for Temporal to function. Please check the $db_type plugin installation."
+            return 1
+        fi
+        echo "$db_type service '$service_name' created successfully."
+        
+        # Verify the service was actually created
+        sleep 2
+        if ! dokku "$db_type:info" "$service_name" >/dev/null 2>&1; then
+            echo "Error: $db_type service '$service_name' was not created properly."
+            return 1
+        fi
+    fi
+
+    # 5. Store configuration for this Temporal service
+    echo "DEBUG: [temporal:create] Setting global config: ${config_var_name}=${db_type}" >&2
+    if ! dokku config:set --global --no-restart "${config_var_name}=${db_type}"; then
+        local config_set_rc=$?
+        echo "Error: Failed to set $config_var_name. 'dokku config:set --global' exited with $config_set_rc." >&2
+        echo "Warning: Temporal service '$service_name' is in an inconsistent state."
+        
+        # Cleanup: Remove the database service if we just created it
+        if [ "$db_exists" = false ]; then
+            echo "Cleaning up: Removing the $db_type service that was just created..."
+            dokku "$db_type:destroy" "$service_name" --force 2>/dev/null || true
+        fi
         return 1
     fi
-    echo "$db_type service '$service_name' created successfully."
 
-    # Store essential configuration for this Temporal service
-    # This makes the service "exist" for other commands like 'info' or 'destroy'.
-    echo "DEBUG: [temporal:create] Setting TEMPORAL_DB_TYPE='$db_type' for service '$service_name'." >&2
-    dokku config:set --no-restart "$service_name" "TEMPORAL_DB_TYPE=$db_type"
-
-    # Add to global list of temporal services (if using this pattern)
+    # 6. Add to service list
     add_service "$service_name"
 
-    # Your original 'create' also fetched DB connection info and stored it.
-    # This is good if 'temporal:start' needs it directly.
-    # However, 'temporal:start' in your example uses temporalio/auto-setup which might
-    # rely on Dokku's standard linking mechanism (e.g., DOKKU_POSTGRES_YELLOW_URL).
-    # For now, let's defer setting detailed DB vars until 'link' or 'start' if they are app-specific.
-    # The TEMPORAL_DB_TYPE is the most important piece of metadata for the service itself.
-
-    echo "Temporal service '$service_name' with database type '$db_type' created."
-    echo "You may need to run 'dokku temporal:start $service_name' to start the Temporal server processes."
-    echo "And 'dokku temporal:link $service_name <your_app>' to link it to an application."
+    echo ""
+    echo "✓ Temporal service '$service_name' created successfully!"
+    echo "  Database type: $db_type"
+    echo "  Docker network: $temporal_docker_network"
+    echo ""
+    echo "Next steps:"
+    echo "  1. Start the service: dokku temporal:start $service_name"
+    echo "  2. Link to an app: dokku temporal:link $service_name <your_app>"
+    echo ""
     return 0
 }

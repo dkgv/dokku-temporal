@@ -1,38 +1,70 @@
 #!/usr/bin/env bash
 
-# Temporal destroy command
-
+# temporal:destroy <service_name> [--force]
 temporal:destroy() {
     local service_name="$1"
-    local force="${2:-false}"
-    
+    local force_flag="${2:-false}" # Should be true if --force is passed
+
+    echo "DEBUG: [temporal:destroy] Called for service '$service_name', force_flag='$force_flag'." >&2
+
     if ! validate_service_name "$service_name" "destroy"; then
         return 1
     fi
 
     # Check if service is linked to any apps
-    local linked_apps=$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null)
-    if [ -n "$linked_apps" ] && [ "$force" != "true" ]; then
-        echo "Error: Service '$service_name' is linked to apps: $linked_apps"
-        echo "Use '--force' to destroy anyway"
+    local linked_apps
+    linked_apps=$(get_linked_apps "$service_name")
+    if [ -n "$linked_apps" ] && [ "$force_flag" != "--force" ]; then
+        echo "Error: Service '$service_name' is linked to the following app(s):" >&2
+        echo "$linked_apps" | while IFS= read -r app; do echo "  - $app"; done >&2
+        echo "Use '--force' to destroy the service and its links anyway." >&2
         return 1
+    elif [ -n "$linked_apps" ] && [ "$force_flag" == "--force" ]; then
+        echo "Info: Force destroying service '$service_name' and its links to app(s):"
+        echo "$linked_apps" | while IFS= read -r app_to_unlink; do
+             echo "  - Unlinking $app_to_unlink (Note: app may need manual env var cleanup or restart)"
+             temporal:unlink "$service_name" "$app_to_unlink" # Call actual unlink logic
+        done
     fi
 
-    # Get database type
-    local db_type=$(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")
+    # Get database type from global prefixed config
+    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    local db_type
+    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    local db_type_rc=$?
 
-    # Stop and remove containers
+    if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then
+        echo "Warning: [temporal:destroy] Could not determine database type for '$service_name' (checked $service_config_db_type_var)."
+        echo "Will attempt to remove generic service entries, but cannot destroy underlying datastore if its type is unknown."
+        db_type="" # Ensure db_type is empty if not found
+    else
+        echo "DEBUG: [temporal:destroy] Determined db_type for '$service_name' is '$db_type'."
+    fi
+
+    echo "Stopping and removing Temporal containers for '$service_name'..."
     docker stop "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
     docker rm "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
 
-    # Remove database using Dokku's database plugin
-    dokku $db_type:destroy $service_name --force
+    if [ -n "$db_type" ]; then
+        echo "Destroying $db_type datastore service '$service_name'..."
+        if dokku "$db_type:destroy" "$service_name" --force; then
+            echo "$db_type service '$service_name' destroyed successfully."
+        else
+            echo "Warning: Failed to destroy $db_type service '$service_name', or it didn't exist."
+        fi
+    fi
 
-    # Remove from global services list
     remove_service "$service_name"
 
-    # Remove service config
-    dokku config:unset $service_name --global TEMPORAL_DB_TYPE
+    # Unset the service's specific configuration using config:get to check existence
+    dokku config:get --global "$service_config_db_type_var" >/dev/null 2>&1
+    if [ $? -eq 0 ]; then # If config:get succeeded (var exists)
+        dokku config:unset --global "$service_config_db_type_var"
+        echo "DEBUG: [temporal:destroy] Unset global config '$service_config_db_type_var'."
+    else
+        echo "DEBUG: [temporal:destroy] Global config '$service_config_db_type_var' was not set, nothing to unset."
+    fi
 
-    echo "Temporal service '$service_name' destroyed"
+    echo "Temporal service '$service_name' destroyed."
+    return 0
 }
