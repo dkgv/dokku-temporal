@@ -20,30 +20,6 @@ dokku plugin:install https://github.com/dokku/dokku-mysql.git mysql
 dokku plugin:install https://github.com/your-repo/dokku-temporal.git temporal
 ```
 
-## Testing
-
-The plugin includes a Docker-based test environment that sets up a complete Dokku installation with all required plugins.
-
-To run the tests:
-
-```bash
-# Build and run the test container from the root directory
-cd /path/to/dokku-temporal
-docker build -t dokku-temporal-test -f tests/Dockerfile .
-docker run --rm dokku-temporal-test
-```
-
-The test suite will:
-1. Set up a fresh Dokku installation
-2. Install required plugins (postgres, mysql)
-3. Run through all plugin functionality
-4. Clean up after itself
-
-You can also run the tests interactively for debugging:
-```bash
-docker run -it --rm dokku-temporal-test /bin/bash
-```
-
 ## Configuration
 
 See [config.md](config.md) for detailed configuration options and environment variables.
