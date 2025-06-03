@@ -56,12 +56,21 @@ remove_service() {
 
 # Add app to linked apps list
 add_linked_app() {
-    local app_name="$1"
-    dokku config:set --global TEMPORAL_LINKS="$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null | sed "/$app_name/d").$app_name"
+    local service_name="$1"
+    local app_name="$2"
+    dokku config:set --global TEMPORAL_LINKED_APPS="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null | sed "/$service_name:$app_name/d").$service_name:$app_name"
 }
 
 # Remove app from linked apps list
 remove_linked_app() {
-    local app_name="$1"
-    dokku config:set --global TEMPORAL_LINKS="$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null | sed "/$app_name/d")"
+    local service_name="$1"
+    local app_name="$2"
+    dokku config:set --global TEMPORAL_LINKED_APPS="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null | sed "/$service_name:$app_name/d")"
+}
+
+# Get linked apps for a service
+get_linked_apps() {
+    local service_name="$1"
+    local linked_apps="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)"
+    echo "$linked_apps" | tr '.' ' ' | grep -o "$service_name:[^ ]*" | cut -d':' -f2
 }

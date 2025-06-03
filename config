@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+# Source plugin helpers
+. "$PLUGIN_CORE_AVAILABLE_PATH/common/functions"
+
+# Plugin name
+PLUGIN_COMMAND_PREFIX="temporal"
+PLUGIN_SERVICE="temporal"
+
+# Plugin paths
+PLUGIN_CONFIG_ROOT="$PLUGIN_PATH/config"
+PLUGIN_DATA_ROOT="$PLUGIN_PATH/data"
+
+# Plugin version
+PLUGIN_VERSION="$(cat "$PLUGIN_PATH/VERSION")"

@@ -1,21 +1,22 @@
 #!/usr/bin/env bash
 
 # Temporal plugin dispatcher
+export PLUGIN_COMMAND_PREFIX="temporal"
 
 # Source common functions
-. "$PLUGIN_PATH/functions/common"
+. "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/functions/common"
 
 # Main command dispatcher
-temporal() {
+$PLUGIN_COMMAND_PREFIX() {
     local cmd="${1:-help}"
     shift
 
     # Source and execute the appropriate command file
-    if [ -f "$PLUGIN_PATH/functions/$cmd" ]; then
-        . "$PLUGIN_PATH/functions/$cmd"
-        temporal:$cmd "$@"
+    if [ -f "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/$cmd" ]; then
+        . "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/$cmd"
+        $PLUGIN_COMMAND_PREFIX:$cmd "$@"
     else
-        . "$PLUGIN_PATH/functions/help"
-        temporal:help
+        . "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/help"
+        $PLUGIN_COMMAND_PREFIX:help
     fi
 }

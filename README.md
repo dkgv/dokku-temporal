@@ -17,7 +17,7 @@ dokku plugin:install https://github.com/dokku/dokku-mysql.git mysql
 ## Installation
 
 ```bash
-dokku plugin:install https://github.com/your-repo/dokku-temporal.git temporal
+dokku plugin:install https://github.com/dkgv/dokku-temporal.git temporal
 ```
 
 ## Configuration
