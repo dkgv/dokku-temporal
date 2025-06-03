@@ -79,6 +79,29 @@ dokku temporal:config:prometheus my-temporal
 dokku temporal:config:grafana my-temporal
 ```
 
+### DNS Configuration
+
+The Temporal services use direct port mapping and require proper DNS configuration. You'll need to:
+
+1. Add an A/AAAA record pointing to your Dokku host's IP address
+2. Ensure the ports are accessible through your firewall:
+   - Web UI: 8080
+   - Prometheus: 9090
+   - Grafana: 8085
+
+For example, if your Dokku host is `example.com`, you'll need to:
+
+1. Create an A/AAAA record:
+   - Host: `my-temporal`
+   - Points to: Dokku host's IP address
+
+2. Access the services at:
+   - Web UI: `http://my-temporal.example.com:8080`
+   - Prometheus: `http://my-temporal.example.com:9090`
+   - Grafana: `http://my-temporal.example.com:8085`
+
+Note: Since this is a plugin and not a Dokku app, you cannot use Dokku's domains plugin to manage custom domains. You'll need to manage DNS records directly through your DNS provider.
+
 ## Usage
 
 ### Create a Temporal Service
