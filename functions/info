@@ -1,17 +1,65 @@
 #!/usr/bin/env bash
 
-# Temporal info command
-
+# temporal:info <service_name>
 temporal:info() {
     local service_name="$1"
-    
+    echo "DEBUG: [temporal:info] Function called with service_name='$service_name'" >&2
+
     if ! validate_service_name "$service_name" "info"; then
+        # validate_service_name prints usage and returns 1
         return 1
     fi
 
+    # Check if the service (as a config object) exists
+    # A more robust check might be to see if TEMPORAL_DB_TYPE is set for it.
+    if ! dokku config:has "$service_name" TEMPORAL_DB_TYPE >/dev/null 2>&1; then
+        echo "Error: Temporal service '$service_name' does not appear to exist or is not fully configured."
+        echo "Hint: Was it created with 'dokku temporal:create $service_name'?"
+        return 1
+    fi
+    echo "DEBUG: [temporal:info] Service '$service_name' seems to exist (has TEMPORAL_DB_TYPE)." >&2
+
+
     echo "Temporal Service Information:"
-    echo "Name: $service_name"
-    echo "Database Type: $(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")"
-    echo "Status:"
-    docker ps --filter "name=temporal-$service_name" --format "{{.Names}}: {{.Status}}"
+    echo "  Name: $service_name"
+
+    local db_type
+    # Use 2>/dev/null to suppress "false" output from config:get if var doesn't exist
+    db_type=$(dokku config:get "$service_name" TEMPORAL_DB_TYPE 2>/dev/null)
+    if [ -z "$db_type" ]; then
+        echo "  Database Type: Not set or unknown (Error retrieving TEMPORAL_DB_TYPE)"
+    else
+        echo "  Database Type: $db_type"
+    fi
+
+    # Example: Displaying linked apps
+    local linked_apps
+    linked_apps=$(get_linked_apps "$service_name")
+    if [ -n "$linked_apps" ]; then
+        echo "  Linked to Apps:"
+        echo "$linked_apps" | while read -r app; do echo "    - $app"; done
+    else
+        echo "  Linked to Apps: None"
+    fi
+
+    # Status: Check for Docker containers (if your plugin manages them directly)
+    # This part depends heavily on how your 'start' command actually runs Temporal.
+    # The current 'start' example runs 'temporalio/auto-setup'.
+    # If you are managing more complex Docker Compose setups, this would be different.
+    echo "  Status (temporal-server-$service_name container):"
+    if docker ps --filter "name=^temporal-server-${service_name}$" --format "{{.Names}}: {{.Status}}" | grep -q .; then
+        docker ps --filter "name=^temporal-server-${service_name}$" --format "    {{.Names}}: {{.Status}} (Ports: {{.Ports}})"
+    else
+        echo "    temporal-server-$service_name: Not running or does not exist"
+    fi
+    # You might also want to check the status of the associated Dokku datastore (e.g., postgres service)
+    local dokku_db_status
+    if [ -n "$db_type" ]; then
+      dokku_db_status=$(dokku "$db_type":info "$service_name" --status 2>/dev/null || echo "unknown")
+      echo "  Dokku Datastore ($db_type: $service_name) Status: $dokku_db_status"
+    fi
+
+
+    echo "DEBUG: [temporal:info] Function finished for '$service_name'." >&2
+    return 0
 }

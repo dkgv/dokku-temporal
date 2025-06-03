@@ -1,89 +1,117 @@
 #!/usr/bin/env bash
 
 # Determine the absolute path to the directory where this 'commands' script resides.
-# This will reliably be the root of your enabled plugin, e.g., /var/lib/dokku/plugins/enabled/temporal
-# BASH_SOURCE[0] is the path to the script itself.
-# dirname gets its directory.
-# cd ... && pwd gets the absolute path, resolving symlinks.
 SCRIPT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
 
 # Explicitly set and export PLUGIN_PATH for the context of this script and any
-# functions it sources. This ensures that even if Dokku's PLUGIN_PATH is
-# not correctly propagated or is different, our scripts use the path
-# derived from this script's actual location.
+# functions it sources.
 export PLUGIN_PATH="$SCRIPT_ROOT_DIR"
 
 # Ensure PLUGIN_COMMAND_PREFIX is set and exported for sourced scripts
-# This should match the value in your ./config file.
-export PLUGIN_COMMAND_PREFIX="temporal"
+export PLUGIN_COMMAND_PREFIX="temporal" # This must match EXPECTED_PLUGIN_PREFIX below
 
-# Now, source your plugin's common functions using the robustly determined PLUGIN_PATH.
-# This path will now correctly be, e.g., /var/lib/dokku/plugins/enabled/temporal/functions/common
+echo "DEBUG: [./commands] SCRIPT_ROOT_DIR=$SCRIPT_ROOT_DIR" >&2
+echo "DEBUG: [./commands] PLUGIN_PATH=$PLUGIN_PATH" >&2
+echo "DEBUG: [./commands] PLUGIN_COMMAND_PREFIX=$PLUGIN_COMMAND_PREFIX" >&2
+
+# Source your plugin's common functions
 COMMON_FUNCTIONS_PATH="$PLUGIN_PATH/functions/common"
+echo "DEBUG: [./commands] Attempting to source common functions from: $COMMON_FUNCTIONS_PATH" >&2
 
 if [ -f "$COMMON_FUNCTIONS_PATH" ]; then
     . "$COMMON_FUNCTIONS_PATH"
+    echo "DEBUG: [./commands] Successfully sourced common functions." >&2
 else
-    # This is a critical failure if common functions cannot be found.
-    echo "CRITICAL ERROR: Cannot find plugin common functions file." >&2
+    echo "CRITICAL ERROR: [./commands] Cannot find plugin common functions file." >&2
     echo "Attempted path: $COMMON_FUNCTIONS_PATH" >&2
-    echo "SCRIPT_ROOT_DIR was: $SCRIPT_ROOT_DIR" >&2
-    echo "Effective PLUGIN_PATH for sourcing was: $PLUGIN_PATH" >&2
-    exit 1
+    exit 1 # Critical failure
 fi
 
-# Main command dispatcher function for the 'temporal' plugin
+# Main plugin handler function - This is where your original dispatcher logic goes
+# It's called from the bottom of this script.
+# $1 will be the subcommand (e.g., "info", "create", "config:get")
+# "$@" will be the arguments for that subcommand (e.g., <service_name>, <key>)
 temporal() {
-    local original_cmd="${1:-help}"
-    # The function to call will be like 'temporal:create', 'temporal:config:get'
-    local cmd_to_run="$PLUGIN_COMMAND_PREFIX:$original_cmd"
-    # The basename of the file containing the function definitions
-    local file_to_source_basename="$original_cmd"
-    shift # Remove the command itself from the arguments passed to the subcommand
+    local original_subcommand="$1" # e.g., "info", "create", "config:get"
+    shift # Remove the subcommand from arguments, $@ now contains only args for the sub_command_fn
 
-    # Handle commands that are grouped into a single file (e.g., all config commands in functions/config)
-    case "$original_cmd" in
+    echo "DEBUG: [./commands/temporal()] Received subcommand '$original_subcommand' with args '$*'" >&2
+
+    # Determine the function to call (e.g., "temporal:info", "temporal:config:get")
+    local fn_to_call="$PLUGIN_COMMAND_PREFIX:$original_subcommand"
+
+    # Determine the basename of the file to source (e.g., "info", "config")
+    local file_to_source_basename="$original_subcommand"
+    case "$original_subcommand" in
         config|config:get|config:set|config:web-ui|config:prometheus|config:grafana)
             file_to_source_basename="config"
             ;;
-        help) # Explicitly handle 'help' to source functions/help
+        help) # If you have a specific 'help' function in functions/help
             file_to_source_basename="help"
             ;;
-        # Add other command groupings here if needed in the future
+        # Add other command groupings here if needed
     esac
+    echo "DEBUG: [./commands/temporal()] Determined file_to_source_basename='$file_to_source_basename'" >&2
 
-    # Construct the full path to the function definition file
     local fn_file_path="$PLUGIN_PATH/functions/$file_to_source_basename"
+    echo "DEBUG: [./commands/temporal()] Attempting to source function definition file: $fn_file_path" >&2
 
     if [ -f "$fn_file_path" ]; then
-        # Source the file (e.g., $PLUGIN_PATH/functions/config or $PLUGIN_PATH/functions/create)
-        . "$fn_file_path"
+        . "$fn_file_path" # Source the file (e.g., functions/info or functions/config)
+        echo "DEBUG: [./commands/temporal()] Successfully sourced '$fn_file_path'." >&2
 
-        # Check if the specific subcommand function (e.g., temporal:config:get) is now defined
-        if type "$cmd_to_run" &>/dev/null; then
-            # Execute the subcommand function with the remaining arguments
-            "$cmd_to_run" "$@"
+        # Check if the specific subcommand function (e.g., temporal:info) is now defined
+        if type "$fn_to_call" &>/dev/null; then
+            echo "DEBUG: [./commands/temporal()] Function '$fn_to_call' is defined. Executing with args: '$*'" >&2
+            "$fn_to_call" "$@" # Execute the command (e.g., temporal:info <service_name>)
+            local exit_status=$?
+            echo "DEBUG: [./commands/temporal()] '$fn_to_call' exited with status $exit_status." >&2
+            return $exit_status
         else
-            echo "Error: Plugin internal function '$cmd_to_run' not found after sourcing '$fn_file_path'." >&2
-            # Fallback to showing the plugin's help
-            if [ "$original_cmd" != "help" ] && [ -f "$PLUGIN_PATH/functions/help" ]; then
-                 . "$PLUGIN_PATH/functions/help" # Source help functions
-                 "$PLUGIN_COMMAND_PREFIX:help"    # Call the main help function
+            echo "Error: [./commands/temporal()] Plugin internal function '$fn_to_call' not found after sourcing '$fn_file_path'." >&2
+            # Attempt to call the plugin's main help function if the target wasn't help itself
+            if [ "$original_subcommand" != "help" ] && [ -f "$PLUGIN_PATH/functions/help" ]; then
+                 . "$PLUGIN_PATH/functions/help"
+                 "$PLUGIN_COMMAND_PREFIX:help" # Call temporal:help
             else
-                # Generic usage message if help itself is broken or was the command
                 echo "Usage: dokku $PLUGIN_COMMAND_PREFIX <command> [args...]" >&2
             fi
-            return 1 # Indicate failure
+            return 127 # Command not found (POSIX standard)
         fi
     else
-        # If the command's function file itself isn't found
-        echo "Error: Command '$original_cmd' is not recognized by the '$PLUGIN_COMMAND_PREFIX' plugin (file '$fn_file_path' not found)." >&2
-        if [ -f "$PLUGIN_PATH/functions/help" ]; then
+        echo "Error: [./commands/temporal()] Command file for '$original_subcommand' ('$fn_file_path') not found." >&2
+        if [ -f "$PLUGIN_PATH/functions/help" ]; then # Fallback to main help
              . "$PLUGIN_PATH/functions/help"
              "$PLUGIN_COMMAND_PREFIX:help"
         else
             echo "Usage: dokku $PLUGIN_COMMAND_PREFIX <command> [args...]" >&2
         fi
-        return 1 # Indicate failure
+        return 126 # Command found but cannot be invoked (file not found)
     fi
 }
+
+# =============================================================================
+# Main script execution starts here when Dokku calls:
+# /var/lib/dokku/plugins/enabled/temporal/commands temporal:subcommand arg1 arg2
+# =============================================================================
+
+COMMAND_FROM_DOKKU="$1"    # This will be like "temporal:info", "temporal:create" or "help" from Dokku triggers
+EXPECTED_PLUGIN_PREFIX="temporal:" # Must match PLUGIN_COMMAND_PREFIX
+
+echo "DEBUG: [./commands main] Script invoked. COMMAND_FROM_DOKKU='$COMMAND_FROM_DOKKU', All ARGS='$*'" >&2
+
+if [[ "$COMMAND_FROM_DOKKU" == ${EXPECTED_PLUGIN_PREFIX}* ]]; then
+    # This is a command for our 'temporal' plugin
+    SUBCOMMAND_FOR_PLUGIN_FUNCTION="${COMMAND_FROM_DOKKU#$EXPECTED_PLUGIN_PREFIX}" # Extracts "info", "create", "config:get"
+    shift # Remove "temporal:subcommand" from $@, leaving only args for the subcommand
+
+    echo "DEBUG: [./commands main] Dispatching to temporal() with SUBCOMMAND='$SUBCOMMAND_FOR_PLUGIN_FUNCTION' and ARGS='$*'" >&2
+    temporal "$SUBCOMMAND_FOR_PLUGIN_FUNCTION" "$@" # Call the main 'temporal' function defined above
+    exit $? # Exit with the status from the temporal() function
+else
+    # This script was called by Dokku's loop for a command not prefixed with "temporal:"
+    # (e.g., during a generic trigger like 'help' or if another plugin tried to call it)
+    # Exit with 10 (DOKKU_NOT_IMPLEMENTED_EXIT) to tell Dokku this plugin doesn't handle this call.
+    echo "DEBUG: [./commands main] Command '$COMMAND_FROM_DOKKU' is not for this plugin. Exiting with 10." >&2
+    exit 10
+fi
