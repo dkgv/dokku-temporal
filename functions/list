@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+# Temporal list command
+
+temporal:list() {
+    echo "Temporal Services:"
+    dokku config:get --global TEMPORAL_SERVICES | tr '.' '\n' | grep -v '^$' 2>/dev/null || echo "No Temporal services configured"
+}

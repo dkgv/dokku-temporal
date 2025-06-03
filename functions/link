@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+# Temporal link command
+
+temporal:link() {
+    local service_name="$1"
+    local app_name="$2"
+    
+    if [ -z "$service_name" ] || [ -z "$app_name" ]; then
+        echo "Usage: dokku temporal:link <service> <app>"
+        return 1
+    fi
+
+    # Add environment variables to app
+    local db_type=$(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")
+    dokku config:set $app_name \
+        TEMPORAL_SERVICE_NAME=$service_name \
+        TEMPORAL_DB_TYPE=$db_type
+
+    # Add to linked apps list
+    add_linked_app "$app_name"
+
+    echo "Linked Temporal service '$service_name' to app '$app_name'"
+}

@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+# Temporal restart command
+
+temporal:restart() {
+    local service_name="$1"
+    
+    if ! validate_service_name "$service_name" "restart"; then
+        return 1
+    fi
+
+    temporal:stop "$service_name"
+    temporal:start "$service_name"
+}

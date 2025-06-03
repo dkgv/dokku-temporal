@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+
+# Temporal create command
+
+temporal:create() {
+    local service_name="$1"
+    local db_type="${2:-postgres}"  # Default to postgres if not specified
+    
+    if ! validate_service_name "$service_name" "create"; then
+        return 1
+    fi
+
+    # Validate database type and check if plugin exists
+    case "$db_type" in
+        postgres)
+            if ! check_db_plugin "postgres"; then
+                return 1
+            fi
+            ;;
+        mysql)
+            if ! check_db_plugin "mysql"; then
+                return 1
+            fi
+            ;;
+        *)
+            echo "Error: Invalid database type '$db_type'. Supported types: postgres, mysql"
+            return 1
+            ;;
+    esac
+
+    # Create network if it doesn't exist
+    docker network inspect temporal-network &>/dev/null || \
+        docker network create temporal-network
+
+    # Create database using Dokku's database plugin
+    case "$db_type" in
+        postgres)
+            dokku postgres:create $service_name
+            ;;
+        mysql)
+            dokku mysql:create $service_name
+            ;;
+    esac
+
+    # Get database connection info
+    local db_info=$(get_db_connection_info $service_name)
+    local db_host=$(echo "$db_info" | grep DB_HOST | cut -d'=' -f2)
+    local db_port=$(echo "$db_info" | grep DB_PORT | cut -d'=' -f2)
+    local db_name=$(echo "$db_info" | grep DB_NAME | cut -d'=' -f2)
+    local db_user=$(echo "$db_info" | grep DB_USER | cut -d'=' -f2)
+    local db_password=$(echo "$db_info" | grep DB_PASSWORD | cut -d'=' -f2)
+
+    # Store database connection info
+    add_service "$service_name"
+    dokku config:set $service_name \
+        TEMPORAL_DB_TYPE=$db_type \
+        TEMPORAL_DB_HOST=$db_host \
+        TEMPORAL_DB_PORT=$db_port \
+        TEMPORAL_DB_NAME=$db_name \
+        TEMPORAL_DB_USER=$db_user \
+        TEMPORAL_DB_PASSWORD=$db_password
+
+    echo "Temporal service '$service_name' with database type '$db_type' created"
+}

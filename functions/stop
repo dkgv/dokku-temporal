@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Temporal stop command
+
+temporal:stop() {
+    local service_name="$1"
+    
+    if ! validate_service_name "$service_name" "stop"; then
+        return 1
+    fi
+
+    # Stop Temporal components
+    docker stop "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
+    docker rm "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
+
+    echo "Temporal service '$service_name' stopped"
+}

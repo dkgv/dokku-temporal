@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+
+# Temporal info command
+
+temporal:info() {
+    local service_name="$1"
+    
+    if ! validate_service_name "$service_name" "info"; then
+        return 1
+    fi
+
+    echo "Temporal Service Information:"
+    echo "Name: $service_name"
+    echo "Database Type: $(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")"
+    echo "Status:"
+    docker ps --filter "name=temporal-$service_name" --format "{{.Names}}: {{.Status}}"
+}

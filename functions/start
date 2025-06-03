@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+
+# Temporal start command
+
+temporal:start() {
+    local service_name="$1"
+    
+    if ! validate_service_name "$service_name" "start"; then
+        return 1
+    fi
+
+    # Get database connection info
+    local db_info=$(get_db_connection_info $service_name)
+    local db_host=$(echo "$db_info" | grep DB_HOST | cut -d'=' -f2)
+    local db_port=$(echo "$db_info" | grep DB_PORT | cut -d'=' -f2)
+    local db_name=$(echo "$db_info" | grep DB_NAME | cut -d'=' -f2)
+    local db_user=$(echo "$db_info" | grep DB_USER | cut -d'=' -f2)
+    local db_password=$(echo "$db_info" | grep DB_PASSWORD | cut -d'=' -f2)
+
+    # Start Temporal server with database connection
+    docker run -d \
+        --name "temporal-server-$service_name" \
+        --network temporal-network \
+        -p 7233:7233 \
+        -e TEMPORAL_DB_HOST=$db_host \
+        -e TEMPORAL_DB_PORT=$db_port \
+        -e TEMPORAL_DB_NAME=$db_name \
+        -e TEMPORAL_DB_USER=$db_user \
+        -e TEMPORAL_DB_PASSWORD=$db_password \
+        temporalio/auto-setup:latest
+
+    echo "Temporal service '$service_name' started"
+}

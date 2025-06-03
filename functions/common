@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+
+# Common functions used across commands
+
+# Check if a database plugin exists
+check_db_plugin() {
+    local db_type="$1"
+    if ! dokku plugin:exists "$db_type"; then
+        echo "Error: $db_type plugin is not installed"
+        return 1
+    fi
+    return 0
+}
+
+# Get database connection info
+get_db_connection_info() {
+    local service_name="$1"
+    local db_type=$(dokku config:get "$service_name" TEMPORAL_DB_TYPE)
+    
+    local db_info=$(dokku "$db_type":info "$service_name")
+    local db_host=$(echo "$db_info" | grep DSN | cut -d'=' -f2 | cut -d'@' -f2 | cut -d':' -f1)
+    local db_port=$(echo "$db_info" | grep DSN | cut -d'=' -f2 | cut -d'@' -f2 | cut -d':' -f2 | cut -d'/' -f1)
+    local db_name=$(echo "$db_info" | grep DSN | cut -d'=' -f2 | cut -d'/' -f2 | cut -d'?' -f1)
+    local db_user=$(echo "$db_info" | grep DSN | cut -d'=' -f2 | cut -d'@' -f1 | cut -d':' -f1)
+    local db_password=$(echo "$db_info" | grep DSN | cut -d'=' -f2 | cut -d'@' -f1 | cut -d':' -f2)
+
+    echo "DB_HOST=$db_host"
+    echo "DB_PORT=$db_port"
+    echo "DB_NAME=$db_name"
+    echo "DB_USER=$db_user"
+    echo "DB_PASSWORD=$db_password"
+}
+
+# Validate service name
+validate_service_name() {
+    local service_name="$1"
+    local cmd="$2"
+    if [ -z "$service_name" ]; then
+        echo "Usage: dokku temporal:$cmd <service>"
+        return 1
+    fi
+    return 0
+}
+
+# Add service to global list
+add_service() {
+    local service_name="$1"
+    dokku config:set --global TEMPORAL_SERVICES="$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null | sed "/$service_name/d").$service_name"
+}
+
+# Remove service from global list
+remove_service() {
+    local service_name="$1"
+    dokku config:set --global TEMPORAL_SERVICES="$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null | sed "/$service_name/d")"
+}
+
+# Add app to linked apps list
+add_linked_app() {
+    local app_name="$1"
+    dokku config:set --global TEMPORAL_LINKS="$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null | sed "/$app_name/d").$app_name"
+}
+
+# Remove app from linked apps list
+remove_linked_app() {
+    local app_name="$1"
+    dokku config:set --global TEMPORAL_LINKS="$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null | sed "/$app_name/d")"
+}

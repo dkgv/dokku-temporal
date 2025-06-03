@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+
+# Temporal plugin dispatcher
+
+# Source common functions
+. "$PLUGIN_PATH/functions/common"
+
+# Main command dispatcher
+temporal() {
+    local cmd="${1:-help}"
+    shift
+
+    # Source and execute the appropriate command file
+    if [ -f "$PLUGIN_PATH/functions/$cmd" ]; then
+        . "$PLUGIN_PATH/functions/$cmd"
+        temporal:$cmd "$@"
+    else
+        . "$PLUGIN_PATH/functions/help"
+        temporal:help
+    fi
+}

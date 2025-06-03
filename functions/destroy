@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+
+# Temporal destroy command
+
+temporal:destroy() {
+    local service_name="$1"
+    local force="${2:-false}"
+    
+    if ! validate_service_name "$service_name" "destroy"; then
+        return 1
+    fi
+
+    # Check if service is linked to any apps
+    local linked_apps=$(dokku config:get --global TEMPORAL_LINKS 2>/dev/null)
+    if [ -n "$linked_apps" ] && [ "$force" != "true" ]; then
+        echo "Error: Service '$service_name' is linked to apps: $linked_apps"
+        echo "Use '--force' to destroy anyway"
+        return 1
+    fi
+
+    # Get database type
+    local db_type=$(dokku config:get $service_name TEMPORAL_DB_TYPE || echo "postgres")
+
+    # Stop and remove containers
+    docker stop "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
+    docker rm "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
+
+    # Remove database using Dokku's database plugin
+    dokku $db_type:destroy $service_name --force
+
+    # Remove from global services list
+    remove_service "$service_name"
+
+    # Remove service config
+    dokku config:unset $service_name --global TEMPORAL_DB_TYPE
+
+    echo "Temporal service '$service_name' destroyed"
+}

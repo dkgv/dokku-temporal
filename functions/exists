@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+
+# Temporal exists command
+
+temporal:exists() {
+    local service_name="$1"
+    
+    if ! validate_service_name "$service_name" "exists"; then
+        return 1
+    fi
+
+    if docker ps --filter "name=temporal-$service_name" >/dev/null 2>&1; then
+        echo "true"
+        return 0
+    else
+        echo "false"
+        return 1
+    fi
+}

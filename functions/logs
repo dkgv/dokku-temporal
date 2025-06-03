@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+# Temporal logs command
+
+temporal:logs() {
+    local service_name="$1"
+    local tail_num="${2:-100}"
+    
+    if ! validate_service_name "$service_name" "logs"; then
+        return 1
+    fi
+
+    echo "Temporal Server Logs:"
+    docker logs "temporal-server-$service_name" --tail "$tail_num"
+    echo ""
+    echo "Database Logs:"
+    docker logs "temporal-db-$service_name" --tail "$tail_num"
+}
