@@ -1,22 +1,89 @@
 #!/usr/bin/env bash
 
-# Temporal plugin dispatcher
+# Determine the absolute path to the directory where this 'commands' script resides.
+# This will reliably be the root of your enabled plugin, e.g., /var/lib/dokku/plugins/enabled/temporal
+# BASH_SOURCE[0] is the path to the script itself.
+# dirname gets its directory.
+# cd ... && pwd gets the absolute path, resolving symlinks.
+SCRIPT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+
+# Explicitly set and export PLUGIN_PATH for the context of this script and any
+# functions it sources. This ensures that even if Dokku's PLUGIN_PATH is
+# not correctly propagated or is different, our scripts use the path
+# derived from this script's actual location.
+export PLUGIN_PATH="$SCRIPT_ROOT_DIR"
+
+# Ensure PLUGIN_COMMAND_PREFIX is set and exported for sourced scripts
+# This should match the value in your ./config file.
 export PLUGIN_COMMAND_PREFIX="temporal"
 
-# Source common functions
-. "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/functions/common"
+# Now, source your plugin's common functions using the robustly determined PLUGIN_PATH.
+# This path will now correctly be, e.g., /var/lib/dokku/plugins/enabled/temporal/functions/common
+COMMON_FUNCTIONS_PATH="$PLUGIN_PATH/functions/common"
 
-# Main command dispatcher
-$PLUGIN_COMMAND_PREFIX() {
-    local cmd="${1:-help}"
-    shift
+if [ -f "$COMMON_FUNCTIONS_PATH" ]; then
+    . "$COMMON_FUNCTIONS_PATH"
+else
+    # This is a critical failure if common functions cannot be found.
+    echo "CRITICAL ERROR: Cannot find plugin common functions file." >&2
+    echo "Attempted path: $COMMON_FUNCTIONS_PATH" >&2
+    echo "SCRIPT_ROOT_DIR was: $SCRIPT_ROOT_DIR" >&2
+    echo "Effective PLUGIN_PATH for sourcing was: $PLUGIN_PATH" >&2
+    exit 1
+fi
 
-    # Source and execute the appropriate command file
-    if [ -f "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/$cmd" ]; then
-        . "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/$cmd"
-        $PLUGIN_COMMAND_PREFIX:$cmd "$@"
+# Main command dispatcher function for the 'temporal' plugin
+temporal() {
+    local original_cmd="${1:-help}"
+    # The function to call will be like 'temporal:create', 'temporal:config:get'
+    local cmd_to_run="$PLUGIN_COMMAND_PREFIX:$original_cmd"
+    # The basename of the file containing the function definitions
+    local file_to_source_basename="$original_cmd"
+    shift # Remove the command itself from the arguments passed to the subcommand
+
+    # Handle commands that are grouped into a single file (e.g., all config commands in functions/config)
+    case "$original_cmd" in
+        config|config:get|config:set|config:web-ui|config:prometheus|config:grafana)
+            file_to_source_basename="config"
+            ;;
+        help) # Explicitly handle 'help' to source functions/help
+            file_to_source_basename="help"
+            ;;
+        # Add other command groupings here if needed in the future
+    esac
+
+    # Construct the full path to the function definition file
+    local fn_file_path="$PLUGIN_PATH/functions/$file_to_source_basename"
+
+    if [ -f "$fn_file_path" ]; then
+        # Source the file (e.g., $PLUGIN_PATH/functions/config or $PLUGIN_PATH/functions/create)
+        . "$fn_file_path"
+
+        # Check if the specific subcommand function (e.g., temporal:config:get) is now defined
+        if type "$cmd_to_run" &>/dev/null; then
+            # Execute the subcommand function with the remaining arguments
+            "$cmd_to_run" "$@"
+        else
+            echo "Error: Plugin internal function '$cmd_to_run' not found after sourcing '$fn_file_path'." >&2
+            # Fallback to showing the plugin's help
+            if [ "$original_cmd" != "help" ] && [ -f "$PLUGIN_PATH/functions/help" ]; then
+                 . "$PLUGIN_PATH/functions/help" # Source help functions
+                 "$PLUGIN_COMMAND_PREFIX:help"    # Call the main help function
+            else
+                # Generic usage message if help itself is broken or was the command
+                echo "Usage: dokku $PLUGIN_COMMAND_PREFIX <command> [args...]" >&2
+            fi
+            return 1 # Indicate failure
+        fi
     else
-        . "$PLUGIN_PATH/enabled/$PLUGIN_COMMAND_PREFIX/help"
-        $PLUGIN_COMMAND_PREFIX:help
+        # If the command's function file itself isn't found
+        echo "Error: Command '$original_cmd' is not recognized by the '$PLUGIN_COMMAND_PREFIX' plugin (file '$fn_file_path' not found)." >&2
+        if [ -f "$PLUGIN_PATH/functions/help" ]; then
+             . "$PLUGIN_PATH/functions/help"
+             "$PLUGIN_COMMAND_PREFIX:help"
+        else
+            echo "Usage: dokku $PLUGIN_COMMAND_PREFIX <command> [args...]" >&2
+        fi
+        return 1 # Indicate failure
     fi
 }
