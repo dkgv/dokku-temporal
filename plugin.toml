@@ -26,15 +26,13 @@ link = "temporal:link"
 unlink = "temporal:unlink"
 
 # Configuration commands
-# These map to functions within your ./functions/config file.
-# The main ./commands dispatcher will need to correctly source ./functions/config
-# and then call the specific function (e.g., temporal:config:get).
+# Keys with colons MUST be quoted in TOML.
 config = "temporal:config"                 # For `dokku temporal:config <app>`
-config:get = "temporal:config:get"         # For `dokku temporal:config:get <app> <key>`
-config:set = "temporal:config:set"         # For `dokku temporal:config:set <app> <file>`
-config:web-ui = "temporal:config:web-ui"     # For `dokku temporal:config:web-ui <app>`
-config:prometheus = "temporal:config:prometheus" # For `dokku temporal:config:prometheus <app>`
-config:grafana = "temporal:config:grafana"   # For `dokku temporal:config:grafana <app>`
+"config:get" = "temporal:config:get"       # For `dokku temporal:config:get <app> <key>`
+"config:set" = "temporal:config:set"       # For `dokku temporal:config:set <app> <file>`
+"config:web-ui" = "temporal:config:web-ui" # For `dokku temporal:config:web-ui <app>`
+"config:prometheus" = "temporal:config:prometheus" # For `dokku temporal:config:prometheus <app>`
+"config:grafana" = "temporal:config:grafana" # For `dokku temporal:config:grafana <app>`
 
 # Help command (standard practice)
 help = "temporal:help"
