@@ -14,12 +14,7 @@ restart = "temporal:restart"
 # Information and listing
 info = "temporal:info"
 list = "temporal:list"
-exists = "temporal:exists"
 logs = "temporal:logs"
-
-# Interaction
-enter = "temporal:enter"
-connect = "temporal:connect"
 
 # Linking
 link = "temporal:link"

@@ -1,7 +1,3 @@
-#!/usr/bin/env bash
-
-# Temporal stop command
-
 temporal:stop() {
     local service_name="$1"
     
@@ -9,9 +5,29 @@ temporal:stop() {
         return 1
     fi
 
-    # Stop Temporal components
-    docker stop "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
-    docker rm "temporal-server-$service_name" "temporal-db-$service_name" 2>/dev/null || true
-
-    echo "Temporal service '$service_name' stopped"
+    echo "Stopping Temporal service '$service_name'..."
+    
+    # Stop and remove our containers
+    local stopped_any=false
+    
+    # Stop Temporal server
+    if docker stop "temporal-server-$service_name" 2>/dev/null; then
+        echo "✓ Stopped Temporal server"
+        docker rm "temporal-server-$service_name" 2>/dev/null || true
+        stopped_any=true
+    fi
+    
+    # Stop Temporal UI  
+    if docker stop "temporal-ui-$service_name" 2>/dev/null; then
+        echo "✓ Stopped Temporal UI"
+        docker rm "temporal-ui-$service_name" 2>/dev/null || true
+        stopped_any=true
+    fi
+    
+    if [ "$stopped_any" = true ]; then
+        echo "Temporal service '$service_name' stopped"
+        echo "Note: Database service remains running (managed separately)"
+    else
+        echo "No Temporal containers were running for '$service_name'"
+    fi
 }

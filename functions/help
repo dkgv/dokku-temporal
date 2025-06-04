@@ -12,9 +12,6 @@ temporal:help() {
     echo "  list                          List all Temporal services"
     echo "  link <service> <app>          Link Temporal service to an app"
     echo "  unlink <service> <app>        Unlink Temporal service from an app"
-    echo "  exists <service>              Check if Temporal service exists"
     echo "  logs <service> [tail-num]     Show Temporal service logs"
-    echo "  enter <service>               Enter Temporal service container"
-    echo "  connect <service>             Connect to Temporal service"
     echo "  destroy <service> [--force]   Destroy Temporal service"
 }

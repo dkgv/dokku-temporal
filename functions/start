@@ -365,9 +365,6 @@ temporal:start() {
                 echo ""
                 echo "Monitor with:"
                 echo "  dokku temporal:logs $service_name"
-                echo ""
-                echo "Connect with:"
-                echo "  dokku temporal:connect $service_name"
                 return 0
             else
                 echo "⚠ Temporal UI failed to start: $ui_docker_output"
