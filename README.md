@@ -1,4 +1,4 @@
-# Dokku Temporal Plugin
+# dokku-temporal
 
 A Dokku plugin for managing Temporal workflow platform services. Automatically handles database connectivity, schema setup, and provides both Temporal server and Web UI.
 
