@@ -4,7 +4,7 @@
 
 temporal:help() {
     echo "Temporal Plugin Commands:"
-    echo "  create <service> [db-type]     Create a new Temporal service with optional database type (postgres/mysql)"
+    echo "  create <service> [db-type] [--db-service=existing_service]     Create a new Temporal service with optional database type (postgres/mysql) or existing database service"
     echo "  start <service>               Start Temporal service"
     echo "  stop <service>                Stop Temporal service"
     echo "  restart <service>             Restart Temporal service"

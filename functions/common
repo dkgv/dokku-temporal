@@ -34,6 +34,7 @@ check_db_plugin() {
 get_db_connection_info() {
     local service_name="$1"
     local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    local service_config_db_service_var="TEMPORAL_SERVICE_${service_name}_DB_SERVICE_NAME"
     local db_type
     db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
     local db_type_rc=$?
@@ -44,13 +45,23 @@ get_db_connection_info() {
         return 1 # Cannot proceed without knowing db_type
     fi
 
-    echo "DEBUG: [get_db_connection_info] Using db_type '$db_type' to fetch Dokku db info for '$service_name'" >&2
+    # Check if a custom database service name is configured
+    local actual_db_service
+    actual_db_service=$(dokku config:get --global "$service_config_db_service_var" 2>/dev/null)
+    if [ -n "$actual_db_service" ]; then
+        echo "DEBUG: [get_db_connection_info] Using custom database service name: '$actual_db_service'" >&2
+    else
+        actual_db_service="$service_name"
+        echo "DEBUG: [get_db_connection_info] Using default database service name: '$actual_db_service'" >&2
+    fi
+
+    echo "DEBUG: [get_db_connection_info] Using db_type '$db_type' to fetch Dokku db info for '$actual_db_service'" >&2
     local db_info
-    db_info=$(dokku "$db_type":info "$service_name" --dsn 2>/dev/null || dokku "$db_type":info "$service_name" --quiet 2>/dev/null)
+    db_info=$(dokku "$db_type":info "$actual_db_service" --dsn 2>/dev/null || dokku "$db_type":info "$actual_db_service" --quiet 2>/dev/null)
     local db_info_rc=$?
 
     if [ $db_info_rc -ne 0 ] || [ -z "$db_info" ]; then
-        echo "Error: Could not get DB info for '$service_name' using type '$db_type'. 'dokku $db_type:info $service_name' failed or returned empty." >&2
+        echo "Error: Could not get DB info for '$actual_db_service' using type '$db_type'. 'dokku $db_type:info $actual_db_service' failed or returned empty." >&2
         return 1
     fi
     echo "DEBUG: [get_db_connection_info] Raw db_info/DSN: $db_info" >&2

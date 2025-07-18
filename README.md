@@ -34,7 +34,7 @@ dokku temporal:link my-temporal my-app
 ## Commands
 
 ```
-create <service> [db-type]     Create Temporal service (postgres/mysql)
+create <service> [db-type] [--db-service=existing_service]     Create Temporal service (postgres/mysql) or use existing database
 start <service>               Start service (server + Web UI)
 stop <service>                Stop service
 restart <service>             Restart service
@@ -96,10 +96,16 @@ dokku temporal:restart my-temporal
 ## Examples
 
 ```bash
+# Basic usage
 dokku temporal:create prod-temporal
 dokku temporal:start prod-temporal
 dokku temporal:link prod-temporal my-app
 dokku apps:restart my-app
+
+# Using existing database
+dokku postgres:create my-existing-db
+dokku temporal:create my-temporal postgres --db-service=my-existing-db
+dokku temporal:start my-temporal
 
 # Monitor via SSH tunnel:
 ssh -L 8080:localhost:8080 deploy@prod-server.com
@@ -107,7 +113,7 @@ ssh -L 8080:localhost:8080 deploy@prod-server.com
 
 ## Architecture
 
-- **Database:** PostgreSQL/MySQL container (via Dokku plugins)
+- **Database:** PostgreSQL/MySQL container (via Dokku plugins) - can use existing database services
 - **Server:** Temporal server with auto-setup (`temporalio/auto-setup`)
 - **UI:** Web interface (`temporalio/ui`)
 - **Networking:** Automatic IP-based connectivity (works on bridge network)
