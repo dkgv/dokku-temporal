@@ -10,6 +10,7 @@ destroy = "temporal:destroy"
 start = "temporal:start"
 stop = "temporal:stop"
 restart = "temporal:restart"
+upgrade = "temporal:upgrade"
 
 # Information and listing
 info = "temporal:info"

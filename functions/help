@@ -8,6 +8,7 @@ temporal:help() {
     echo "  start <service>               Start Temporal service"
     echo "  stop <service>                Stop Temporal service"
     echo "  restart <service>             Restart Temporal service"
+    echo "  upgrade <service> [--version=<version>]             Upgrade Temporal service to latest or specific version"
     echo "  info <service>                Show Temporal service information"
     echo "  list                          List all Temporal services"
     echo "  link <service> <app>          Link Temporal service to an app"

@@ -38,6 +38,7 @@ create <service> [db-type] [--db-service=existing_service]     Create Temporal s
 start <service>               Start service (server + Web UI)
 stop <service>                Stop service
 restart <service>             Restart service
+upgrade <service> [--version=<version>]                      Upgrade Temporal to latest or specific version
 info <service>                Show service information
 list                          List all services
 link <service> <app>          Link service to app (sets TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE)
@@ -109,6 +110,12 @@ dokku temporal:start my-temporal
 
 # Monitor via SSH tunnel:
 ssh -L 8080:localhost:8080 deploy@prod-server.com
+
+# Upgrade to latest version
+dokku temporal:upgrade prod-temporal
+
+# Upgrade to specific version  
+dokku temporal:upgrade prod-temporal --version=1.22.0
 ```
 
 ## Architecture

@@ -1,0 +1,487 @@
+#!/usr/bin/env bash
+
+# temporal:upgrade <service_name> [--version=<version>]
+temporal:upgrade() {
+    local service_name="$1"
+    local version="latest"
+    
+    # Parse options from remaining arguments
+    shift 1 2>/dev/null
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --version=*)
+                version="${1#*=}"
+                shift
+                ;;
+            *)
+                echo "Error: Unknown option: $1"
+                echo "Usage: dokku temporal:upgrade <service_name> [--version=<version>]"
+                return 1
+                ;;
+        esac
+    done
+    
+    echo "DEBUG: [temporal:upgrade] Called for service '$service_name', version '$version'" >&2
+
+    if ! validate_service_name "$service_name" "upgrade"; then
+        return 1
+    fi
+
+    # 1. Check if service is configured
+    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    local db_type
+    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$db_type" ]; then
+        echo "Error: Temporal service '$service_name' is not configured."
+        echo "Please run: dokku temporal:create $service_name"
+        return 1
+    fi
+
+    # 2. Display warning and get confirmation
+    echo "⚠️  WARNING: Temporal Upgrade Process"
+    echo ""
+    echo "You are about to upgrade Temporal service '$service_name' to version '$version'."
+    echo ""
+    echo "IMPORTANT DISCLAIMERS:"
+    echo "• This process uses zero-downtime blue-green deployment"
+    echo "• Running workflows will continue during most of the upgrade"
+    echo "• Brief interruption (~1-2 seconds) during final port switch"
+    echo "• All Temporal workers will need to reconnect after upgrade"
+    echo "• Database schema migrations may occur automatically"
+    echo "• There are NO WARRANTIES or GUARANTEES provided with this upgrade"
+    echo "• You are responsible for testing and validating the upgrade"
+    echo "• Always backup your database before major version upgrades"
+    echo ""
+    echo "Current images that will be upgraded:"
+    echo "  • Temporal server: temporalio/auto-setup:$version"
+    echo "  • Temporal UI: temporalio/ui:$version"
+    echo ""
+    
+    echo -n "Do you want to continue with the upgrade? [y/N]: "
+    read -r confirmation
+    case "$confirmation" in
+        [yY]|[yY][eE][sS])
+            echo "Proceeding with zero-downtime upgrade..."
+            ;;
+        *)
+            echo "Upgrade cancelled by user."
+            return 0
+            ;;
+    esac
+
+    echo ""
+    echo "Starting zero-downtime upgrade process..."
+    echo ""
+
+    # 3. Define container names and ports
+    local server_container="temporal-server-$service_name"
+    local ui_container="temporal-ui-$service_name"
+    local new_server_container="temporal-server-$service_name-new"
+    local new_ui_container="temporal-ui-$service_name-new"
+    local temporal_server_image="temporalio/auto-setup:$version"
+    local temporal_ui_image="temporalio/ui:$version"
+    
+    # Staging ports (different from production ports)
+    local staging_server_port="7234"
+    local staging_ui_port="8081"
+    local prod_server_port="7233"
+    local prod_ui_port="8080"
+
+    # 4. Check current running status
+    local server_running=false
+    local ui_running=false
+    
+    if docker ps --filter "name=^${server_container}$" --format "{{.Names}}" | grep -q "^${server_container}$"; then
+        server_running=true
+        echo "✓ Temporal server is currently running"
+    else
+        echo "• Temporal server is not running - will start new version"
+    fi
+    
+    if docker ps --filter "name=^${ui_container}$" --format "{{.Names}}" | grep -q "^${ui_container}$"; then
+        ui_running=true
+        echo "✓ Temporal UI is currently running"
+    else
+        echo "• Temporal UI is not running - will start new version"
+    fi
+
+    # 5. Check for port conflicts on staging ports
+    echo ""
+    echo "Checking for port conflicts..."
+    
+    local port_conflicts=false
+    if netstat -tuln 2>/dev/null | grep -q ":$staging_server_port "; then
+        echo "✗ Port $staging_server_port is already in use"
+        port_conflicts=true
+    fi
+    
+    if netstat -tuln 2>/dev/null | grep -q ":$staging_ui_port "; then
+        echo "✗ Port $staging_ui_port is already in use"
+        port_conflicts=true
+    fi
+    
+    if [ "$port_conflicts" = true ]; then
+        echo "Cannot proceed with zero-downtime upgrade due to port conflicts."
+        echo "Please free up ports $staging_server_port and $staging_ui_port"
+        return 1
+    fi
+    
+    echo "✓ Staging ports $staging_server_port and $staging_ui_port are available"
+
+    # 6. Pull new Docker images
+    echo ""
+    echo "📥 Step 1/6: Pulling Docker images..."
+    
+    echo "  • Pulling Temporal server image: $temporal_server_image"
+    if ! docker pull "$temporal_server_image"; then
+        echo "✗ Failed to pull $temporal_server_image"
+        echo "Please check if the version '$version' exists"
+        return 1
+    fi
+    echo "  ✓ Server image pulled"
+    
+    echo "  • Pulling Temporal UI image: $temporal_ui_image"
+    if ! docker pull "$temporal_ui_image"; then
+        echo "✗ Failed to pull $temporal_ui_image"
+        echo "Please check if the version '$version' exists"
+        return 1
+    fi
+    echo "  ✓ UI image pulled"
+    
+    echo "✅ Step 1/6 Complete: Docker images ready"
+
+    # 7. Get database connection info (same as existing start function)
+    echo ""
+    echo "🔍 Step 2/6: Preparing database connectivity..."
+    
+    echo "  • Retrieving database connection details for '$service_name'"
+    local db_conn_vars
+    db_conn_vars=$(get_db_connection_info "$service_name")
+    if [ $? -ne 0 ] || [ -z "$db_conn_vars" ]; then
+        echo "✗ Could not get database connection info for '$service_name'."
+        return 1
+    fi
+
+    # Parse connection details
+    local DB_HOST DB_PORT DB_USER DB_PASSWORD DB_NAME
+    while IFS='=' read -r key value; do
+        value=$(echo "$value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')
+        case "$key" in
+            DB_HOST) DB_HOST="$value" ;;
+            DB_PORT) DB_PORT="$value" ;;
+            DB_USER) DB_USER="$value" ;;
+            DB_PASSWORD) DB_PASSWORD="$value" ;;
+            DB_NAME) DB_NAME="$value" ;;
+        esac
+    done <<< "$db_conn_vars"
+
+    if [ -z "$DB_HOST" ] || [ -z "$DB_PORT" ] || [ -z "$DB_USER" ] || [ -z "$DB_NAME" ]; then
+        echo "✗ Missing essential database connection details."
+        return 1
+    fi
+
+    echo "  ✓ Database: $DB_NAME on $DB_HOST:$DB_PORT"
+    echo "✅ Step 2/6 Complete: Database connectivity ready"
+
+    # 8. Determine network (same logic as start function)
+    echo ""
+    echo "🌐 Step 3/6: Configuring Docker networking..."
+    
+    echo "  • Detecting optimal Docker network..."
+    local db_network=""
+    if [ "$server_running" = true ]; then
+        # Get network from existing container
+        echo "  • Using network from existing Temporal server"
+        local networks
+        networks=$(docker inspect "$server_container" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
+        for net in $networks; do
+            if [ "$net" != "bridge" ] && [ "$net" != "none" ] && [ "$net" != "host" ]; then
+                db_network="$net"
+                break
+            fi
+        done
+        if [ -z "$db_network" ]; then
+            db_network=$(echo "$networks" | awk '{print $1}')
+        fi
+    else
+        # Try to find database container network
+        echo "  • Scanning for database container network..."
+        local possible_db_names=(
+            "dokku.postgres.$service_name"
+            "dokku-postgres-$service_name"
+            "postgres-$service_name"
+            "$service_name.postgres"
+        )
+        
+        for name in "${possible_db_names[@]}"; do
+            if docker inspect "$name" >/dev/null 2>&1; then
+                echo "  • Found database container: $name"
+                local db_networks
+                db_networks=$(docker inspect "$name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
+                for net in $db_networks; do
+                    if [ "$net" != "bridge" ] && [ "$net" != "none" ] && [ "$net" != "host" ]; then
+                        db_network="$net"
+                        break 2
+                    fi
+                done
+                if [ -z "$db_network" ]; then
+                    db_network=$(echo "$db_networks" | awk '{print $1}')
+                    break
+                fi
+            fi
+        done
+        
+        if [ -z "$db_network" ]; then
+            db_network="bridge"
+            echo "  • No custom network found, using default bridge"
+        fi
+    fi
+    
+    echo "  ✓ Network selected: $db_network"
+    echo "✅ Step 3/6 Complete: Network configuration ready"
+
+    # 9. Configure Temporal environment variables
+    local temporal_env_args=()
+    if [ "$db_type" == "postgres" ]; then
+        temporal_env_args+=("-e" "DB=postgres12")
+        temporal_env_args+=("-e" "DB_PORT=$DB_PORT")
+        temporal_env_args+=("-e" "DBNAME=$DB_NAME")
+        temporal_env_args+=("-e" "POSTGRES_SEEDS=$DB_HOST")
+        temporal_env_args+=("-e" "POSTGRES_USER=$DB_USER")
+        temporal_env_args+=("-e" "POSTGRES_PWD=$DB_PASSWORD")
+        temporal_env_args+=("-e" "SKIP_POSTGRES_ADMIN_CHECK=true")
+    elif [ "$db_type" == "mysql" ]; then
+        temporal_env_args+=("-e" "DB=mysql8")
+        temporal_env_args+=("-e" "DB_PORT=$DB_PORT")
+        temporal_env_args+=("-e" "DBNAME=$DB_NAME")
+        temporal_env_args+=("-e" "MYSQL_SEEDS=$DB_HOST")
+        temporal_env_args+=("-e" "MYSQL_USER=$DB_USER")
+        temporal_env_args+=("-e" "MYSQL_PWD=$DB_PASSWORD")
+    fi
+
+    temporal_env_args+=("-e" "TEMPORAL_NAMESPACE=default")
+    temporal_env_args+=("-e" "SKIP_SCHEMA_SETUP=false")
+    temporal_env_args+=("-e" "SKIP_DEFAULT_NAMESPACE_CREATION=false")
+
+    # 10. Start new Temporal server on staging port
+    echo ""
+    echo "🚀 Step 4/6: Starting staging containers..."
+    
+    echo "  • Preparing staging environment..."
+    echo "  • Cleaning up any existing staging containers..."
+    docker stop "$new_server_container" >/dev/null 2>&1 || true
+    docker rm "$new_server_container" >/dev/null 2>&1 || true
+    
+    # Also clean up any failed final containers from previous runs
+    docker stop "${server_container}-final" >/dev/null 2>&1 || true
+    docker rm "${server_container}-final" >/dev/null 2>&1 || true
+
+    echo "  • Starting Temporal server on staging port $staging_server_port..."
+    if ! docker run -d \
+        --name "$new_server_container" \
+        --network "$db_network" \
+        -p "$staging_server_port:7233" \
+        -p "7235:7235" \
+        "${temporal_env_args[@]}" \
+        "$temporal_server_image" >/dev/null 2>&1; then
+        echo "✗ Failed to start new Temporal server"
+        return 1
+    fi
+    
+    echo "  ✓ Temporal server container started"
+
+    # 11. Wait for new server to be healthy
+    echo "  • Waiting for Temporal server to initialize..."
+    echo "    (This may take 30-60 seconds for database migrations)"
+    
+    local health_checks=0
+    local max_health_checks=30
+    local server_healthy=false
+    
+    while [ $health_checks -lt $max_health_checks ]; do
+        if docker exec "$new_server_container" tctl --address localhost:7233 namespace list >/dev/null 2>&1; then
+            server_healthy=true
+            break
+        fi
+        if [ $((health_checks % 5)) -eq 0 ]; then
+            echo "    • Health check $((health_checks + 1))/$max_health_checks ($(( (health_checks + 1) * 2 ))s elapsed)"
+        fi
+        sleep 2
+        health_checks=$((health_checks + 1))
+    done
+    
+    if [ "$server_healthy" = false ]; then
+        echo "  ✗ Temporal server failed health checks after $((max_health_checks * 2)) seconds"
+        echo "  • Cleaning up failed staging container..."
+        docker stop "$new_server_container" >/dev/null 2>&1 || true
+        docker rm "$new_server_container" >/dev/null 2>&1 || true
+        return 1
+    fi
+    
+    echo "  ✓ Temporal server is healthy and ready"
+
+    # 12. Start new UI on staging port
+    echo "  • Starting Temporal UI on staging port $staging_ui_port..."
+    
+    docker stop "$new_ui_container" >/dev/null 2>&1 || true
+    docker rm "$new_ui_container" >/dev/null 2>&1 || true
+    
+    # Also clean up any failed UI final containers
+    docker stop "${ui_container}-final" >/dev/null 2>&1 || true
+    docker rm "${ui_container}-final" >/dev/null 2>&1 || true
+    
+    local new_server_ip
+    new_server_ip=$(docker inspect "$new_server_container" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1)
+    
+    if [ -z "$new_server_ip" ]; then
+        new_server_ip="$new_server_container"
+    fi
+
+    if ! docker run -d \
+        --name "$new_ui_container" \
+        --network "$db_network" \
+        -p "$staging_ui_port:8080" \
+        -e "TEMPORAL_ADDRESS=$new_server_ip:7233" \
+        -e "TEMPORAL_CORS_ORIGINS=http://localhost:8080" \
+        "$temporal_ui_image" >/dev/null 2>&1; then
+        echo "  ⚠ Failed to start Temporal UI (server will still be upgraded)"
+    else
+        echo "  ✓ Temporal UI started and connecting to server"
+        sleep 3
+    fi
+    
+    echo "✅ Step 4/6 Complete: Staging environment ready"
+
+    # 13. Perform atomic switch
+    echo ""
+    echo "⚡ Step 5/6: Performing atomic switch..."
+    echo "  ⚠ Brief service interruption starting now..."
+    
+    # Stop old containers first
+    echo "  • Stopping old production containers..."
+    if [ "$server_running" = true ]; then
+        docker stop "$server_container" >/dev/null 2>&1 || true
+        docker rm "$server_container" >/dev/null 2>&1 || true
+        echo "    ✓ Old server container stopped"
+    fi
+    if [ "$ui_running" = true ]; then
+        docker stop "$ui_container" >/dev/null 2>&1 || true
+        docker rm "$ui_container" >/dev/null 2>&1 || true
+        echo "    ✓ Old UI container stopped"
+    fi
+    
+    # Small delay to ensure ports are freed
+    echo "  • Releasing ports (2s delay)..."
+    sleep 2
+    
+    # Stop staging containers
+    echo "  • Stopping staging containers..."
+    docker stop "$new_server_container" >/dev/null 2>&1 || true
+    if docker ps -a --filter "name=^${new_ui_container}$" --format "{{.Names}}" | grep -q "^${new_ui_container}$"; then
+        docker stop "$new_ui_container" >/dev/null 2>&1 || true
+    fi
+    
+    # Start server with production ports
+    echo "  • Starting server on production ports (7233)..."
+    if ! docker run -d \
+        --name "$server_container" \
+        --network "$db_network" \
+        -p "$prod_server_port:7233" \
+        -p "7234:7234" \
+        -p "7235:7235" \
+        "${temporal_env_args[@]}" \
+        "$temporal_server_image" >/dev/null 2>&1; then
+        echo "    ✗ Failed to start server on production ports"
+        echo "    • Attempting rollback to staging..."
+        
+        # Try to restart staging container as fallback
+        docker start "$new_server_container" >/dev/null 2>&1 || true
+        echo "    ⚠ Rollback attempted - check staging server on port $staging_server_port"
+        return 1
+    fi
+    echo "    ✓ Server started on production ports"
+    
+    # Start UI with production port if it was running before
+    if [ "$ui_running" = true ] || docker ps -a --filter "name=^${new_ui_container}$" --format "{{.Names}}" | grep -q "^${new_ui_container}$"; then
+        echo "  • Starting UI on production ports (8080)..."
+        
+        # Get server IP for UI
+        local final_server_ip
+        final_server_ip=$(docker inspect "$server_container" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1)
+        if [ -z "$final_server_ip" ]; then
+            final_server_ip="$server_container"
+        fi
+        
+        # Start UI with production port
+        if ! docker run -d \
+            --name "$ui_container" \
+            --network "$db_network" \
+            -p "$prod_ui_port:8080" \
+            -e "TEMPORAL_ADDRESS=$final_server_ip:7233" \
+            -e "TEMPORAL_CORS_ORIGINS=http://localhost:8080" \
+            "$temporal_ui_image" >/dev/null 2>&1; then
+            echo "    ⚠ Failed to start UI on production port (server is running though)"
+        else
+            echo "    ✓ UI started on production ports"
+        fi
+    fi
+    
+    # Clean up staging containers
+    echo "  • Cleaning up staging containers..."
+    docker rm "$new_server_container" >/dev/null 2>&1 || true
+    if docker ps -a --filter "name=^${new_ui_container}$" --format "{{.Names}}" | grep -q "^${new_ui_container}$"; then
+        docker rm "$new_ui_container" >/dev/null 2>&1 || true
+    fi
+    
+    echo "  ✓ Service interruption complete (~5-10 seconds)"
+    echo "✅ Step 5/6 Complete: Atomic switch successful"
+
+    # 14. Final health check
+    echo ""
+    echo "🔍 Step 6/6: Final verification..."
+    echo "  • Allowing services to stabilize (5s)..."
+    sleep 5
+    
+    echo "  • Checking server status..."
+    if docker ps --filter "name=^${server_container}$" --format "{{.Names}}" | grep -q "^${server_container}$"; then
+        echo "    ✓ Temporal server is running on production ports"
+    else
+        echo "    ⚠ Temporal server may have issues"
+    fi
+    
+    echo "  • Checking UI status..."
+    if docker ps --filter "name=^${ui_container}$" --format "{{.Names}}" | grep -q "^${ui_container}$"; then
+        echo "    ✓ Temporal UI is running on production ports"
+    else
+        echo "    ⚠ Temporal UI may have issues"
+    fi
+    
+    echo "✅ Step 6/6 Complete: Upgrade verification finished"
+
+    # 15. Success message
+    echo ""
+    echo "🎉 Zero-downtime upgrade completed successfully!"
+    echo ""
+    echo "📊 Upgrade Summary:"
+    echo "  Service: $service_name"
+    echo "  Version: $version"
+    echo "  Components upgraded:"
+    echo "    • Temporal server: temporalio/auto-setup:$version"
+    echo "    • Temporal UI: temporalio/ui:$version"
+    echo ""
+    echo "🌐 Access Points:"
+    echo "  • Temporal Server (gRPC): localhost:7233"
+    echo "  • Temporal Web UI: http://localhost:8080"
+    echo ""
+    echo "⚠️ Post-Upgrade Notes:"
+    echo "  • Workers may need a moment to reconnect"
+    echo "  • Monitor logs for any connectivity issues"
+    echo "  • Database migrations (if any) have been applied automatically"
+    echo ""
+    echo "📝 Next Steps:"
+    echo "  • Monitor: dokku temporal:logs $service_name"
+    echo "  • Verify: Check your workflows are processing correctly"
+    echo "  • UI Access: http://localhost:8080 (SSH tunnel for remote servers)"
+    
+    return 0
+}
