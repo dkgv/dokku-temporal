@@ -16,6 +16,21 @@ dokku plugin:install https://github.com/dokku/dokku-mysql.git mysql
 dokku plugin:install https://github.com/dkgv/dokku-temporal.git temporal
 ```
 
+## Uninstallation
+
+Before uninstalling the plugin, destroy all Temporal services:
+
+```bash
+# List all services
+dokku temporal:list
+
+# Destroy each service
+dokku temporal:destroy <service> --force
+
+# Then uninstall the plugin
+dokku plugin:uninstall temporal
+```
+
 ## Quick Start
 
 ```bash
@@ -90,6 +105,13 @@ ssh -L 8080:localhost:8080 user@your-server.com
 
 # Then restart if needed
 dokku temporal:restart my-temporal
+```
+
+**Enable debug output:**
+```bash
+# Get detailed debugging information for troubleshooting
+DOKKU_TRACE=1 dokku temporal:start my-temporal
+DOKKU_TRACE=1 dokku temporal:create my-temporal
 ```
 
 **Database issues:** Plugin auto-handles connectivity, IP resolution, and container startup.

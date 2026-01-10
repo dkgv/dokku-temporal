@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+# pre-delete hook: Runs when a Dokku app is being deleted
+# Automatically unlinks any Temporal services from the app being destroyed
+
+# Determine plugin path
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
+source "$SCRIPT_DIR/functions/common"
+
+APP="$1"
+
+debug_log "[pre-delete] Hook triggered for app '$APP'"
+
+# Get all linked apps from global config
+linked_apps_raw=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || echo "")
+
+if [ -z "$linked_apps_raw" ]; then
+    debug_log "[pre-delete] No Temporal services are linked to any apps"
+    exit 0
+fi
+
+# Find all services linked to this app
+debug_log "[pre-delete] Checking for Temporal services linked to '$APP'"
+
+echo "$linked_apps_raw" | tr '.' '\n' | while IFS=':' read -r service app_name; do
+    if [ -z "$service" ] || [ -z "$app_name" ]; then
+        continue
+    fi
+
+    if [ "$app_name" = "$APP" ]; then
+        echo "Unlinking Temporal service '$service' from app '$APP' (app is being deleted)"
+
+        # Remove from linked apps tracking
+        remove_linked_app "$service" "$APP"
+
+        debug_log "[pre-delete] Unlinked service '$service' from app '$APP'"
+    fi
+done
+
+debug_log "[pre-delete] Hook completed for app '$APP'"
