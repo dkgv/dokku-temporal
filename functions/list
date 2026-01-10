@@ -7,7 +7,7 @@ temporal:list() {
     debug_log "[temporal:list] Listing services from TEMPORAL_SERVICES global var."
     echo "Temporal Services:"
     local services_list
-    services_list=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)
+    services_list=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
 
     if [ -z "$services_list" ]; then
         echo "  No Temporal services configured."
@@ -17,7 +17,7 @@ temporal:list() {
             if [ -n "$service" ]; then # Handle potential empty lines if string was like "..service"
                 # Optionally, get more info like DB type for each
                 local service_config_db_type_var="TEMPORAL_SERVICE_${service}_DB_TYPE"
-                local db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+                local db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
                 if [ -n "$db_type" ]; then
                     echo "  - $service (db: $db_type)"
                 else

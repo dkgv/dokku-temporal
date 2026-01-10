@@ -33,7 +33,7 @@ temporal:create() {
     local config_var_name="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
     debug_log "[temporal:create] Checking if $config_var_name is set globally..."
     local existing_temporal_db_type
-    existing_temporal_db_type=$(dokku config:get --global "$config_var_name" 2>/dev/null)
+    existing_temporal_db_type=$(dokku config:get --global "$config_var_name" 2>/dev/null || true)
     local config_get_rc=$?
 
     if [ "$config_get_rc" -eq 0 ] && [ -n "$existing_temporal_db_type" ]; then

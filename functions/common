@@ -45,7 +45,7 @@ get_db_connection_info() {
     local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
     local service_config_db_service_var="TEMPORAL_SERVICE_${service_name}_DB_SERVICE_NAME"
     local db_type
-    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
     local db_type_rc=$?
     debug_log "[get_db_connection_info] For service '$service_name', db_type from global config '$service_config_db_type_var': '$db_type' (rc=$db_type_rc)"
 
@@ -56,7 +56,7 @@ get_db_connection_info() {
 
     # Check if a custom database service name is configured
     local actual_db_service
-    actual_db_service=$(dokku config:get --global "$service_config_db_service_var" 2>/dev/null)
+    actual_db_service=$(dokku config:get --global "$service_config_db_service_var" 2>/dev/null || true)
     if [ -n "$actual_db_service" ]; then
         debug_log "[get_db_connection_info] Using custom database service name: '$actual_db_service'"
     else
@@ -122,7 +122,7 @@ add_service() {
     local service_name="$1"
     debug_log "[add_service] Adding '$service_name' to TEMPORAL_SERVICES"
     local current_services
-    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)
+    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
     if [[ ".${current_services}." != *".${service_name}."* ]]; then
         if [ -z "$current_services" ]; then
             dokku config:set --global --no-restart TEMPORAL_SERVICES="$service_name"
@@ -139,7 +139,7 @@ remove_service() {
     local service_name="$1"
     debug_log "[remove_service] Removing '$service_name' from TEMPORAL_SERVICES"
     local current_services
-    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)
+    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
     if [ -z "$current_services" ]; then
       debug_log "[remove_service] TEMPORAL_SERVICES is empty, nothing to remove."
       return
@@ -181,7 +181,7 @@ add_linked_app() {
     local app_name="$2"
     debug_log "[add_linked_app] Linking service '$service_name' to app '$app_name' in TEMPORAL_LINKED_APPS"
     local current_links
-    current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)
+    current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)
     local new_link="${service_name}:${app_name}" # Format: service:app
     if [[ ".${current_links}." != *".${new_link}."* ]]; then
         if [ -z "$current_links" ]; then
@@ -201,7 +201,9 @@ remove_linked_app() {
     local link_to_remove="${service_name}:${app_name}"
     debug_log "[remove_linked_app] Unlinking '$link_to_remove' from TEMPORAL_LINKED_APPS"
     local current_links
+    set +e
     current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)
+    set -e
     if [ -z "$current_links" ]; then
         debug_log "[remove_linked_app] TEMPORAL_LINKED_APPS is empty, nothing to remove."
         return
@@ -242,7 +244,7 @@ get_linked_apps() {
     local service_name="$1"
     debug_log "[get_linked_apps] Getting apps linked to '$service_name' from TEMPORAL_LINKED_APPS"
     local linked_apps_raw
-    linked_apps_raw="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)"
+    linked_apps_raw="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)"
     if [ -n "$linked_apps_raw" ]; then
         # Output each app on a new line
         echo "$linked_apps_raw" | tr '.' '\n' | grep "^${service_name}:" | cut -d':' -f2-

@@ -32,7 +32,7 @@ temporal:destroy() {
     # Get database type from global prefixed config
     local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
     local db_type
-    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
     local db_type_rc=$?
 
     if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then

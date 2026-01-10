@@ -15,7 +15,7 @@ temporal:info() {
     local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
     debug_log "[temporal:info] Checking if service '$service_name' is configured via global var '$service_config_db_type_var'."
     local db_type_check
-    db_type_check=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
+    db_type_check=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
     local exit_code_config_get=$?
 
     if [ "$exit_code_config_get" -ne 0 ] || [ -z "$db_type_check" ]; then # Check exit code and if value is empty

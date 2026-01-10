@@ -14,7 +14,7 @@ APP="$1"
 debug_log "[pre-delete] Hook triggered for app '$APP'"
 
 # Get all linked apps from global config
-linked_apps_raw=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || echo "")
+linked_apps_raw=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)
 
 if [ -z "$linked_apps_raw" ]; then
     debug_log "[pre-delete] No Temporal services are linked to any apps"
