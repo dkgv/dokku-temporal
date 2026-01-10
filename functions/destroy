@@ -23,6 +23,18 @@ temporal:destroy() {
         return 1
     elif [ -n "$linked_apps" ] && [ "$force_flag" == "--force" ]; then
         echo "Info: Force destroying service '$service_name' and its links to app(s):"
+        # Source the unlink function file so we can call temporal:unlink
+        local unlink_file_path
+        if [ -n "$PLUGIN_PATH" ]; then
+            unlink_file_path="$PLUGIN_PATH/functions/unlink"
+        else
+            unlink_file_path="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/unlink"
+        fi
+        if [ -f "$unlink_file_path" ]; then
+            . "$unlink_file_path"
+        else
+            echo "Warning: Could not source unlink function file at '$unlink_file_path'. Skipping unlink step." >&2
+        fi
         echo "$linked_apps" | while IFS= read -r app_to_unlink; do
              echo "  - Unlinking $app_to_unlink (Note: app may need manual env var cleanup or restart)"
              temporal:unlink "$service_name" "$app_to_unlink" # Call actual unlink logic
