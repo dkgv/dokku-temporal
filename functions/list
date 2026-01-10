@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:list
 temporal:list() {
-    echo "DEBUG: [temporal:list] Listing services from TEMPORAL_SERVICES global var." >&2
+    debug_log "[temporal:list] Listing services from TEMPORAL_SERVICES global var."
     echo "Temporal Services:"
     local services_list
     services_list=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null)

@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:create <service_name> [db_type] [--db-service=existing_service_name]
 temporal:create() {
     local service_name="$1"
     local db_type="${2:-postgres}"
     local db_service=""
-    
+
     # Parse --db-service option from remaining arguments
     shift 2 2>/dev/null || shift $# 2>/dev/null
     while [[ $# -gt 0 ]]; do
@@ -20,8 +22,8 @@ temporal:create() {
                 ;;
         esac
     done
-    
-    echo "DEBUG: [temporal:create] Called with service_name='$service_name', db_type='$db_type', db_service='$db_service'" >&2
+
+    debug_log "[temporal:create] Called with service_name='$service_name', db_type='$db_type', db_service='$db_service'"
 
     if ! validate_service_name "$service_name" "create"; then
         return 1
@@ -29,7 +31,7 @@ temporal:create() {
 
     # 1. Check if the Temporal service already exists
     local config_var_name="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    echo "DEBUG: [temporal:create] Checking if $config_var_name is set globally..." >&2
+    debug_log "[temporal:create] Checking if $config_var_name is set globally..."
     local existing_temporal_db_type
     existing_temporal_db_type=$(dokku config:get --global "$config_var_name" 2>/dev/null)
     local config_get_rc=$?
@@ -39,7 +41,7 @@ temporal:create() {
         echo "Hint: To re-create, first destroy it using 'dokku temporal:destroy $service_name'"
         return 1
     fi
-    echo "DEBUG: [temporal:create] Temporal service '$service_name' not yet configured. Proceeding." >&2
+    debug_log "[temporal:create] Temporal service '$service_name' not yet configured. Proceeding."
 
     # 2. Validate database type and check if plugin is installed
     case "$db_type" in
@@ -55,11 +57,11 @@ temporal:create() {
             return 1
             ;;
     esac
-    echo "DEBUG: [temporal:create] Database type '$db_type' is valid and its plugin is installed." >&2
+    debug_log "[temporal:create] Database type '$db_type' is valid and its plugin is installed."
 
     # 3. Create Docker network for Temporal services
     local temporal_docker_network="temporal-network"
-    echo "DEBUG: [temporal:create] Ensuring Docker network '$temporal_docker_network' exists..."
+    debug_log "[temporal:create] Ensuring Docker network '$temporal_docker_network' exists..."
     if ! docker network inspect "$temporal_docker_network" >/dev/null 2>&1; then
         echo "Info: Creating Docker network '$temporal_docker_network'..."
         if docker network create "$temporal_docker_network"; then
@@ -74,11 +76,11 @@ temporal:create() {
 
     # 4. Create or validate underlying Dokku datastore
     local actual_db_service="${db_service:-$service_name}"
-    echo "DEBUG: [temporal:create] Using database service: '$actual_db_service'" >&2
+    debug_log "[temporal:create] Using database service: '$actual_db_service'"
     
     if [ -n "$db_service" ]; then
         # User specified existing database service - validate it exists
-        echo "DEBUG: [temporal:create] Validating existing $db_type service '$db_service'..."
+        debug_log "[temporal:create] Validating existing $db_type service '$db_service'..."
         if ! dokku "$db_type:info" "$db_service" >/dev/null 2>&1; then
             echo "Error: Specified database service '$db_service' does not exist."
             echo "Please create it first with: dokku $db_type:create $db_service"
@@ -87,7 +89,7 @@ temporal:create() {
         echo "Info: Using existing $db_type service '$db_service'."
     else
         # Default behavior - create database service with same name as temporal service
-        echo "DEBUG: [temporal:create] Checking if $db_type service '$service_name' exists..."
+        debug_log "[temporal:create] Checking if $db_type service '$service_name' exists..."
         local db_exists=false
         
         # Try multiple ways to check if the service exists
@@ -118,7 +120,7 @@ temporal:create() {
     fi
 
     # 5. Store configuration for this Temporal service
-    echo "DEBUG: [temporal:create] Setting global config: ${config_var_name}=${db_type}" >&2
+    debug_log "[temporal:create] Setting global config: ${config_var_name}=${db_type}"
     if ! dokku config:set --global --no-restart "${config_var_name}=${db_type}"; then
         local config_set_rc=$?
         echo "Error: Failed to set $config_var_name. 'dokku config:set --global' exited with $config_set_rc." >&2
@@ -135,7 +137,7 @@ temporal:create() {
     # Store the database service name if different from temporal service name
     if [ -n "$db_service" ]; then
         local db_service_var_name="TEMPORAL_SERVICE_${service_name}_DB_SERVICE_NAME"
-        echo "DEBUG: [temporal:create] Setting global config: ${db_service_var_name}=${db_service}" >&2
+        debug_log "[temporal:create] Setting global config: ${db_service_var_name}=${db_service}"
         if ! dokku config:set --global --no-restart "${db_service_var_name}=${db_service}"; then
             echo "Error: Failed to set $db_service_var_name." >&2
             echo "Warning: Temporal service '$service_name' is in an inconsistent state."

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:link <service_name> <app_name>
 temporal:link() {
     local service_name="$1"
     local app_name="$2"
-    echo "DEBUG: [temporal:link] Called for service '$service_name', app '$app_name'." >&2
+    debug_log "[temporal:link] Called for service '$service_name', app '$app_name'."
 
     if ! validate_service_name "$service_name" "link"; then return 1; fi
     if [ -z "$app_name" ]; then
@@ -36,7 +38,7 @@ temporal:link() {
         echo "Error: Could not retrieve database connection info for '$service_name'."
         return 1
     fi
-    echo "DEBUG: [temporal:link] Retrieved connection info: $connection_info"
+    debug_log "[temporal:link] Retrieved connection info: $connection_info"
 
     # Set environment variables on the app
     # Example TEMPORAL_HOST might be the Dokku host or a service-specific address

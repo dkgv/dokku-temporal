@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # Temporal configuration management
 

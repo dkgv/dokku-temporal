@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # Determine the absolute path to the directory where this 'commands' script resides.
 SCRIPT_ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -10,22 +12,22 @@ export PLUGIN_PATH="$SCRIPT_ROOT_DIR"
 # Ensure PLUGIN_COMMAND_PREFIX is set and exported for sourced scripts
 export PLUGIN_COMMAND_PREFIX="temporal" # This must match EXPECTED_PLUGIN_PREFIX below
 
-echo "DEBUG: [./commands] SCRIPT_ROOT_DIR=$SCRIPT_ROOT_DIR" >&2
-echo "DEBUG: [./commands] PLUGIN_PATH=$PLUGIN_PATH" >&2
-echo "DEBUG: [./commands] PLUGIN_COMMAND_PREFIX=$PLUGIN_COMMAND_PREFIX" >&2
-
-# Source your plugin's common functions
+# Source your plugin's common functions (defines debug_log)
 COMMON_FUNCTIONS_PATH="$PLUGIN_PATH/functions/common"
-echo "DEBUG: [./commands] Attempting to source common functions from: $COMMON_FUNCTIONS_PATH" >&2
 
 if [ -f "$COMMON_FUNCTIONS_PATH" ]; then
     . "$COMMON_FUNCTIONS_PATH"
-    echo "DEBUG: [./commands] Successfully sourced common functions." >&2
 else
     echo "CRITICAL ERROR: [./commands] Cannot find plugin common functions file." >&2
     echo "Attempted path: $COMMON_FUNCTIONS_PATH" >&2
     exit 1 # Critical failure
 fi
+
+debug_log "[./commands] SCRIPT_ROOT_DIR=$SCRIPT_ROOT_DIR"
+debug_log "[./commands] PLUGIN_PATH=$PLUGIN_PATH"
+debug_log "[./commands] PLUGIN_COMMAND_PREFIX=$PLUGIN_COMMAND_PREFIX"
+debug_log "[./commands] Attempting to source common functions from: $COMMON_FUNCTIONS_PATH"
+debug_log "[./commands] Successfully sourced common functions."
 
 # Main plugin handler function - This is where your original dispatcher logic goes
 # It's called from the bottom of this script.
@@ -35,7 +37,7 @@ temporal() {
     local original_subcommand="$1" # e.g., "info", "create", "config:get"
     shift # Remove the subcommand from arguments, $@ now contains only args for the sub_command_fn
 
-    echo "DEBUG: [./commands/temporal()] Received subcommand '$original_subcommand' with args '$*'" >&2
+    debug_log "[./commands/temporal()] Received subcommand '$original_subcommand' with args '$*'"
 
     # Determine the function to call (e.g., "temporal:info", "temporal:config:get")
     local fn_to_call="$PLUGIN_COMMAND_PREFIX:$original_subcommand"
@@ -51,21 +53,21 @@ temporal() {
             ;;
         # Add other command groupings here if needed
     esac
-    echo "DEBUG: [./commands/temporal()] Determined file_to_source_basename='$file_to_source_basename'" >&2
+    debug_log "[./commands/temporal()] Determined file_to_source_basename='$file_to_source_basename'"
 
     local fn_file_path="$PLUGIN_PATH/functions/$file_to_source_basename"
-    echo "DEBUG: [./commands/temporal()] Attempting to source function definition file: $fn_file_path" >&2
+    debug_log "[./commands/temporal()] Attempting to source function definition file: $fn_file_path"
 
     if [ -f "$fn_file_path" ]; then
         . "$fn_file_path" # Source the file (e.g., functions/info or functions/config)
-        echo "DEBUG: [./commands/temporal()] Successfully sourced '$fn_file_path'." >&2
+        debug_log "[./commands/temporal()] Successfully sourced '$fn_file_path'."
 
         # Check if the specific subcommand function (e.g., temporal:info) is now defined
         if type "$fn_to_call" &>/dev/null; then
-            echo "DEBUG: [./commands/temporal()] Function '$fn_to_call' is defined. Executing with args: '$*'" >&2
+            debug_log "[./commands/temporal()] Function '$fn_to_call' is defined. Executing with args: '$*'"
             "$fn_to_call" "$@" # Execute the command (e.g., temporal:info <service_name>)
             local exit_status=$?
-            echo "DEBUG: [./commands/temporal()] '$fn_to_call' exited with status $exit_status." >&2
+            debug_log "[./commands/temporal()] '$fn_to_call' exited with status $exit_status."
             return $exit_status
         else
             echo "Error: [./commands/temporal()] Plugin internal function '$fn_to_call' not found after sourcing '$fn_file_path'." >&2
@@ -98,20 +100,20 @@ temporal() {
 COMMAND_FROM_DOKKU="$1"    # This will be like "temporal:info", "temporal:create" or "help" from Dokku triggers
 EXPECTED_PLUGIN_PREFIX="temporal:" # Must match PLUGIN_COMMAND_PREFIX
 
-echo "DEBUG: [./commands main] Script invoked. COMMAND_FROM_DOKKU='$COMMAND_FROM_DOKKU', All ARGS='$*'" >&2
+debug_log "[./commands main] Script invoked. COMMAND_FROM_DOKKU='$COMMAND_FROM_DOKKU', All ARGS='$*'"
 
 if [[ "$COMMAND_FROM_DOKKU" == ${EXPECTED_PLUGIN_PREFIX}* ]]; then
     # This is a command for our 'temporal' plugin
     SUBCOMMAND_FOR_PLUGIN_FUNCTION="${COMMAND_FROM_DOKKU#$EXPECTED_PLUGIN_PREFIX}" # Extracts "info", "create", "config:get"
     shift # Remove "temporal:subcommand" from $@, leaving only args for the subcommand
 
-    echo "DEBUG: [./commands main] Dispatching to temporal() with SUBCOMMAND='$SUBCOMMAND_FOR_PLUGIN_FUNCTION' and ARGS='$*'" >&2
+    debug_log "[./commands main] Dispatching to temporal() with SUBCOMMAND='$SUBCOMMAND_FOR_PLUGIN_FUNCTION' and ARGS='$*'"
     temporal "$SUBCOMMAND_FOR_PLUGIN_FUNCTION" "$@" # Call the main 'temporal' function defined above
     exit $? # Exit with the status from the temporal() function
 else
     # This script was called by Dokku's loop for a command not prefixed with "temporal:"
     # (e.g., during a generic trigger like 'help' or if another plugin tried to call it)
     # Exit with 10 (DOKKU_NOT_IMPLEMENTED_EXIT) to tell Dokku this plugin doesn't handle this call.
-    echo "DEBUG: [./commands main] Command '$COMMAND_FROM_DOKKU' is not for this plugin. Exiting with 10." >&2
+    debug_log "[./commands main] Command '$COMMAND_FROM_DOKKU' is not for this plugin. Exiting with 10."
     exit 10
 fi

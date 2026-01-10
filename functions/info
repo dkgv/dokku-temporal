@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:info <service_name>
 temporal:info() {
     local service_name="$1"
-    echo "DEBUG: [temporal:info] Function called with service_name='$service_name'" >&2
+    debug_log "[temporal:info] Function called with service_name='$service_name'"
 
     if ! validate_service_name "$service_name" "info"; then
         return 1
@@ -11,18 +13,18 @@ temporal:info() {
 
     # Check if the service is configured by trying to get its prefixed global config var.
     local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    echo "DEBUG: [temporal:info] Checking if service '$service_name' is configured via global var '$service_config_db_type_var'." >&2
+    debug_log "[temporal:info] Checking if service '$service_name' is configured via global var '$service_config_db_type_var'."
     local db_type_check
     db_type_check=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
     local exit_code_config_get=$?
 
     if [ "$exit_code_config_get" -ne 0 ] || [ -z "$db_type_check" ]; then # Check exit code and if value is empty
-        echo "DEBUG: [temporal:info] 'dokku config:get --global $service_config_db_type_var' failed (exit code $exit_code_config_get) or returned empty value ('$db_type_check')." >&2
+        debug_log "[temporal:info] 'dokku config:get --global $service_config_db_type_var' failed (exit code $exit_code_config_get) or returned empty value ('$db_type_check')."
         echo "Error: Temporal service '$service_name' does not appear to exist or is not fully configured."
         echo "Hint: Was it created with 'dokku temporal:create $service_name'?"
         return 1
     fi
-    echo "DEBUG: [temporal:info] Service '$service_name' exists (found $service_config_db_type_var='$db_type_check')." >&2
+    debug_log "[temporal:info] Service '$service_name' exists (found $service_config_db_type_var='$db_type_check')."
 
     echo "Temporal Service Information:"
     echo "  Name: $service_name"
@@ -52,6 +54,6 @@ temporal:info() {
       echo "  Dokku Datastore ($db_type_check: $service_name) Status: Error retrieving or unknown"
     fi
 
-    echo "DEBUG: [temporal:info] Function finished for '$service_name'." >&2
+    debug_log "[temporal:info] Function finished for '$service_name'."
     return 0
 }

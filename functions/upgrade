@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:upgrade <service_name> [--version=<version>]
 temporal:upgrade() {
     local service_name="$1"
     local version="latest"
-    
+
     # Parse options from remaining arguments
     shift 1 2>/dev/null
     while [[ $# -gt 0 ]]; do
@@ -20,8 +22,8 @@ temporal:upgrade() {
                 ;;
         esac
     done
-    
-    echo "DEBUG: [temporal:upgrade] Called for service '$service_name', version '$version'" >&2
+
+    debug_log "[temporal:upgrade] Called for service '$service_name', version '$version'"
 
     if ! validate_service_name "$service_name" "upgrade"; then
         return 1

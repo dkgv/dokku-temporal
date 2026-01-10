@@ -1,3 +1,7 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
 temporal:stop() {
     local service_name="$1"
     

@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:unlink <service_name> <app_name>
 temporal:unlink() {
     local service_name="$1"
     local app_name="$2"
-    echo "DEBUG: [temporal:unlink] Called for service '$service_name', app '$app_name'." >&2
+    debug_log "[temporal:unlink] Called for service '$service_name', app '$app_name'."
 
     if ! validate_service_name "$service_name" "unlink"; then return 1; fi
     if [ -z "$app_name" ]; then

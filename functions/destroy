@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:destroy <service_name> [--force]
 temporal:destroy() {
     local service_name="$1"
     local force_flag="${2:-false}" # Should be true if --force is passed
 
-    echo "DEBUG: [temporal:destroy] Called for service '$service_name', force_flag='$force_flag'." >&2
+    debug_log "[temporal:destroy] Called for service '$service_name', force_flag='$force_flag'."
 
     if ! validate_service_name "$service_name" "destroy"; then
         return 1
@@ -38,7 +40,7 @@ temporal:destroy() {
         echo "Will attempt to remove generic service entries, but cannot destroy underlying datastore if its type is unknown."
         db_type="" # Ensure db_type is empty if not found
     else
-        echo "DEBUG: [temporal:destroy] Determined db_type for '$service_name' is '$db_type'."
+        debug_log "[temporal:destroy] Determined db_type for '$service_name' is '$db_type'."
     fi
 
     echo "Stopping and removing Temporal containers for '$service_name'..."
@@ -60,9 +62,9 @@ temporal:destroy() {
     dokku config:get --global "$service_config_db_type_var" >/dev/null 2>&1
     if [ $? -eq 0 ]; then # If config:get succeeded (var exists)
         dokku config:unset --global "$service_config_db_type_var"
-        echo "DEBUG: [temporal:destroy] Unset global config '$service_config_db_type_var'."
+        debug_log "[temporal:destroy] Unset global config '$service_config_db_type_var'."
     else
-        echo "DEBUG: [temporal:destroy] Global config '$service_config_db_type_var' was not set, nothing to unset."
+        debug_log "[temporal:destroy] Global config '$service_config_db_type_var' was not set, nothing to unset."
     fi
 
     echo "Temporal service '$service_name' destroyed."

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
 
 # temporal:start <service_name>
 temporal:start() {
     local service_name="$1"
-    echo "DEBUG: [temporal:start] Called for service '$service_name'" >&2
+    debug_log "[temporal:start] Called for service '$service_name'"
 
     if ! validate_service_name "$service_name" "start"; then return 1; fi
 
@@ -69,7 +71,7 @@ temporal:start() {
     local networks
     networks=$(docker inspect "$db_container_name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
     
-    echo "DEBUG: PostgreSQL container networks: $networks" >&2
+    debug_log "PostgreSQL container networks: $networks"
     
     if [ -n "$networks" ]; then
         # Prefer custom networks over default bridge network
@@ -259,8 +261,8 @@ temporal:start() {
         temporal_env_args+=("-e" "SKIP_POSTGRES_ADMIN_CHECK=true")
         
         # Additional debug info
-        echo "DEBUG: Temporal will connect to PostgreSQL at: $DB_HOST:$DB_PORT" >&2
-        echo "DEBUG: Database name: $DB_NAME, User: $DB_USER" >&2
+        debug_log "Temporal will connect to PostgreSQL at: $DB_HOST:$DB_PORT"
+        debug_log "Database name: $DB_NAME, User: $DB_USER"
     elif [ "$db_type" == "mysql" ]; then
         temporal_env_args+=("-e" "DB=mysql8")
         temporal_env_args+=("-e" "DB_PORT=$DB_PORT")
