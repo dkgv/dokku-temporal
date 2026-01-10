@@ -1,17 +1,125 @@
 #!/usr/bin/env bash
+# Source config first to ensure PLUGIN_DATA_ROOT is set
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../config"
+
 set -eo pipefail
 [[ $DOKKU_TRACE ]] && set -x
 
 # Common functions used across commands
 
 # Debug logging helper - respects DOKKU_TRACE
+# Must be defined early so it can be used below
 debug_log() {
     if [[ -n "$DOKKU_TRACE" ]]; then
         echo "DEBUG: $*" >&2
     fi
 }
 
+# PLUGIN_DATA_ROOT should be set in config file (sourced above)
+# If for some reason it's not set, fall back to default
+if [[ -z "${PLUGIN_DATA_ROOT}" ]]; then
+    export PLUGIN_DATA_ROOT="${DOKKU_LIB_ROOT:-/var/lib/dokku}/services/temporal"
+fi
+debug_log "[./functions/common] PLUGIN_DATA_ROOT set to: $PLUGIN_DATA_ROOT"
 debug_log "[./functions/common] Sourced."
+
+# Get the service directory path
+service_root() {
+    local service_name="$1"
+    echo "$PLUGIN_DATA_ROOT/$service_name"
+}
+
+# Check if a service exists (has a directory)
+service_exists() {
+    local service_name="$1"
+    local service_dir
+    service_dir=$(service_root "$service_name")
+    [[ -d "$service_dir" ]]
+}
+
+# Set a service info value (stores in a file)
+service_info_set() {
+    local service_name="$1"
+    local key="$2"
+    local value="$3"
+    local service_dir
+    service_dir=$(service_root "$service_name")
+
+    debug_log "[service_info_set] PLUGIN_DATA_ROOT=$PLUGIN_DATA_ROOT"
+    debug_log "[service_info_set] Creating directory: $service_dir"
+    
+    # Ensure parent directory exists with correct permissions
+    if [[ ! -d "$PLUGIN_DATA_ROOT" ]]; then
+        mkdir -p "$PLUGIN_DATA_ROOT"
+        # Try to set ownership to dokku:dokku if possible (may fail if dokku user doesn't exist, that's ok)
+        chown dokku:dokku "$PLUGIN_DATA_ROOT" 2>/dev/null || true
+        chmod 755 "$PLUGIN_DATA_ROOT"
+    fi
+    
+    mkdir -p "$service_dir" || {
+        echo "Error: Failed to create service directory: $service_dir" >&2
+        return 1
+    }
+    # Set ownership to dokku:dokku so the dokku user can read it (may fail if dokku user doesn't exist, that's ok)
+    chown dokku:dokku "$service_dir" 2>/dev/null || true
+    chmod 755 "$service_dir"
+    debug_log "[service_info_set] Writing $key=$value to $service_dir/$key"
+    echo "$value" > "$service_dir/$key" || {
+        echo "Error: Failed to write to $service_dir/$key" >&2
+        return 1
+    }
+    # Set ownership on the file as well (may fail if dokku user doesn't exist, that's ok)
+    chown dokku:dokku "$service_dir/$key" 2>/dev/null || true
+    chmod 644 "$service_dir/$key"
+    debug_log "[service_info_set] Successfully stored $key for service $service_name in $service_dir/$key"
+}
+
+# Get a service info value (reads from a file)
+service_info_get() {
+    local service_name="$1"
+    local key="$2"
+    local service_dir
+    service_dir=$(service_root "$service_name")
+
+    if [[ -f "$service_dir/$key" ]]; then
+        cat "$service_dir/$key"
+    fi
+}
+
+# List all services (directories in PLUGIN_DATA_ROOT)
+service_list_all() {
+    debug_log "[service_list_all] PLUGIN_DATA_ROOT=$PLUGIN_DATA_ROOT"
+    if [[ ! -d "$PLUGIN_DATA_ROOT" ]]; then
+        debug_log "[service_list_all] Directory does not exist: $PLUGIN_DATA_ROOT"
+        return 0
+    fi
+
+    # Check if we can read the directory
+    if [[ ! -r "$PLUGIN_DATA_ROOT" ]]; then
+        debug_log "[service_list_all] Cannot read directory: $PLUGIN_DATA_ROOT (permission denied)"
+        return 0
+    fi
+
+    debug_log "[service_list_all] Searching for services in: $PLUGIN_DATA_ROOT"
+    local services
+    
+    # Use a subshell to change to the target directory before listing
+    # This avoids permission issues with the current working directory (e.g., /root)
+    services=$(cd "$PLUGIN_DATA_ROOT" 2>/dev/null && ls -1 -d */ 2>/dev/null | sed 's|/$||' | sort)
+    
+    # If that fails (e.g., can't cd), try find from a safe directory
+    if [[ -z "$services" ]]; then
+        debug_log "[service_list_all] ls approach failed, trying find from /tmp"
+        local old_pwd
+        old_pwd=$(pwd 2>/dev/null || echo "/tmp")
+        cd /tmp 2>/dev/null || true
+        services=$(find "$PLUGIN_DATA_ROOT" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort)
+        cd "$old_pwd" 2>/dev/null || true
+    fi
+    
+    debug_log "[service_list_all] Found services: $services"
+    echo "$services"
+}
 
 # Check if a database plugin exists by checking its 'commands' script
 check_db_plugin() {
@@ -39,24 +147,21 @@ check_db_plugin() {
     fi
 }
 
-# Get database connection info (uses prefixed global var for db_type)
+# Get database connection info (reads from filesystem)
 get_db_connection_info() {
     local service_name="$1"
-    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    local service_config_db_service_var="TEMPORAL_SERVICE_${service_name}_DB_SERVICE_NAME"
     local db_type
-    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
-    local db_type_rc=$?
-    debug_log "[get_db_connection_info] For service '$service_name', db_type from global config '$service_config_db_type_var': '$db_type' (rc=$db_type_rc)"
+    db_type=$(service_info_get "$service_name" "DB_TYPE")
+    debug_log "[get_db_connection_info] For service '$service_name', db_type from filesystem: '$db_type'"
 
-    if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then
-        echo "Warning: [get_db_connection_info] $service_config_db_type_var not found or empty for '$service_name'. Cannot reliably get DB info." >&2
+    if [ -z "$db_type" ]; then
+        echo "Warning: [get_db_connection_info] DB_TYPE not found for '$service_name'. Cannot reliably get DB info." >&2
         return 1 # Cannot proceed without knowing db_type
     fi
 
     # Check if a custom database service name is configured
     local actual_db_service
-    actual_db_service=$(dokku config:get --global "$service_config_db_service_var" 2>/dev/null || true)
+    actual_db_service=$(service_info_get "$service_name" "DB_SERVICE_NAME")
     if [ -n "$actual_db_service" ]; then
         debug_log "[get_db_connection_info] Using custom database service name: '$actual_db_service'"
     else
@@ -99,6 +204,13 @@ get_db_connection_info() {
     echo "DB_PASSWORD=$db_password"
 }
 
+# Sanitize service name for use in environment variable names
+# Converts hyphens to underscores since env var names can't contain hyphens
+sanitize_service_name_for_env() {
+    local service_name="$1"
+    echo "${service_name//-/_}"
+}
+
 # Validate service name
 validate_service_name() {
     local service_name="$1"
@@ -117,80 +229,33 @@ validate_service_name() {
     return 0
 }
 
-# Add service to global list of TEMPORAL_SERVICES
-add_service() {
-    local service_name="$1"
-    debug_log "[add_service] Adding '$service_name' to TEMPORAL_SERVICES"
-    local current_services
-    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
-    if [[ ".${current_services}." != *".${service_name}."* ]]; then
-        if [ -z "$current_services" ]; then
-            dokku config:set --global --no-restart TEMPORAL_SERVICES="$service_name"
-        else
-            dokku config:set --global --no-restart TEMPORAL_SERVICES="${current_services}.${service_name}"
-        fi
-    else
-        debug_log "[add_service] '$service_name' already in TEMPORAL_SERVICES."
-    fi
-}
+# No longer needed - service existence is determined by directory existence
 
-# Remove service from global list of TEMPORAL_SERVICES
-remove_service() {
-    local service_name="$1"
-    debug_log "[remove_service] Removing '$service_name' from TEMPORAL_SERVICES"
-    local current_services
-    current_services=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
-    if [ -z "$current_services" ]; then
-      debug_log "[remove_service] TEMPORAL_SERVICES is empty, nothing to remove."
-      return
-    fi
-
-    local IFS='.'
-    read -ra services_array <<< "$current_services"
-    local updated_services_array=()
-    local found=0
-    for s in "${services_array[@]}"; do
-        if [[ "$s" == "$service_name" ]]; then
-            found=1
-        else
-            updated_services_array+=("$s")
-        fi
-    done
-    local IFS=$' \t\n'
-
-    if [ "$found" -eq 0 ]; then
-        debug_log "[remove_service] Service '$service_name' not found in TEMPORAL_SERVICES."
-        return
-    fi
-
-    if [ ${#updated_services_array[@]} -eq 0 ]; then
-        dokku config:unset --global TEMPORAL_SERVICES
-        debug_log "[remove_service] TEMPORAL_SERVICES is now empty."
-    else
-        local updated_services_string
-        printf -v updated_services_string '.%s' "${updated_services_array[@]}"
-        updated_services_string=${updated_services_string#.}
-        dokku config:set --global --no-restart TEMPORAL_SERVICES "$updated_services_string"
-        debug_log "[remove_service] TEMPORAL_SERVICES updated to '$updated_services_string'."
-    fi
-}
-
-# Add app to linked apps list (global TEMPORAL_LINKED_APPS)
+# Add app to linked apps list (stored in filesystem)
 add_linked_app() {
-    local service_name="$1" # Argument order from README is service then app
+    local service_name="$1"
     local app_name="$2"
-    debug_log "[add_linked_app] Linking service '$service_name' to app '$app_name' in TEMPORAL_LINKED_APPS"
-    local current_links
-    current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)
-    local new_link="${service_name}:${app_name}" # Format: service:app
-    if [[ ".${current_links}." != *".${new_link}."* ]]; then
-        if [ -z "$current_links" ]; then
-            dokku config:set --global --no-restart TEMPORAL_LINKED_APPS="$new_link"
-        else
-            dokku config:set --global --no-restart TEMPORAL_LINKED_APPS="${current_links}.${new_link}"
-        fi
+    debug_log "[add_linked_app] Linking service '$service_name' to app '$app_name'"
+
+    local service_dir
+    service_dir=$(service_root "$service_name")
+    local links_file="$service_dir/LINKS"
+
+    # Create service directory if it doesn't exist
+    mkdir -p "$service_dir"
+    # Set ownership to dokku:dokku so the dokku user can read it (may fail if dokku user doesn't exist, that's ok)
+    chown dokku:dokku "$service_dir" 2>/dev/null || true
+    chmod 755 "$service_dir"
+
+    # Add app to links file if not already present
+    if [[ -f "$links_file" ]] && grep -q "^${app_name}$" "$links_file"; then
+        debug_log "[add_linked_app] App '$app_name' already linked to service '$service_name'"
     else
-        debug_log "[add_linked_app] Link '$new_link' already in TEMPORAL_LINKED_APPS."
+        echo "$app_name" >> "$links_file"
+        # Set ownership on the file (may fail if dokku user doesn't exist, that's ok)
+        chown dokku:dokku "$links_file" 2>/dev/null || true
+        chmod 644 "$links_file"
+        debug_log "[add_linked_app] Added app '$app_name' to links file"
     fi
 }
 
@@ -198,56 +263,39 @@ add_linked_app() {
 remove_linked_app() {
     local service_name="$1"
     local app_name="$2"
-    local link_to_remove="${service_name}:${app_name}"
-    debug_log "[remove_linked_app] Unlinking '$link_to_remove' from TEMPORAL_LINKED_APPS"
-    local current_links
-    set +e
-    current_links=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null)
-    set -e
-    if [ -z "$current_links" ]; then
-        debug_log "[remove_linked_app] TEMPORAL_LINKED_APPS is empty, nothing to remove."
+    debug_log "[remove_linked_app] Unlinking app '$app_name' from service '$service_name'"
+
+    local service_dir
+    service_dir=$(service_root "$service_name")
+    local links_file="$service_dir/LINKS"
+
+    if [[ ! -f "$links_file" ]]; then
+        debug_log "[remove_linked_app] No links file found"
         return
     fi
 
-    local IFS='.'
-    read -ra links_array <<< "$current_links"
-    local updated_links_array=()
-    local found=0
-    for l in "${links_array[@]}"; do
-        if [[ "$l" == "$link_to_remove" ]]; then
-            found=1
-        else
-            updated_links_array+=("$l")
-        fi
-    done
-    local IFS=$' \t\n'
+    # Remove the app from the links file
+    local temp_file="${links_file}.tmp"
+    grep -v "^${app_name}$" "$links_file" > "$temp_file" 2>/dev/null || true
+    mv "$temp_file" "$links_file"
 
-    if [ "$found" -eq 0 ]; then
-        debug_log "[remove_linked_app] Link '$link_to_remove' not found in TEMPORAL_LINKED_APPS."
-        return
-    fi
-
-    if [ ${#updated_links_array[@]} -eq 0 ]; then
-        dokku config:unset --global TEMPORAL_LINKED_APPS
-        debug_log "[remove_linked_app] TEMPORAL_LINKED_APPS is now empty."
-    else
-        local updated_links_string
-        printf -v updated_links_string '.%s' "${updated_links_array[@]}"
-        updated_links_string=${updated_links_string#.}
-        dokku config:set --global --no-restart TEMPORAL_LINKED_APPS "$updated_links_string"
-        debug_log "[remove_linked_app] TEMPORAL_LINKED_APPS updated to '$updated_links_string'."
+    # Remove links file if empty
+    if [[ ! -s "$links_file" ]]; then
+        rm -f "$links_file"
+        debug_log "[remove_linked_app] Removed empty links file"
     fi
 }
 
 # Get linked apps for a service
 get_linked_apps() {
     local service_name="$1"
-    debug_log "[get_linked_apps] Getting apps linked to '$service_name' from TEMPORAL_LINKED_APPS"
-    local linked_apps_raw
-    linked_apps_raw="$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)"
-    if [ -n "$linked_apps_raw" ]; then
-        # Output each app on a new line
-        echo "$linked_apps_raw" | tr '.' '\n' | grep "^${service_name}:" | cut -d':' -f2-
+    debug_log "[get_linked_apps] Getting apps linked to '$service_name'"
+
+    local service_dir
+    service_dir=$(service_root "$service_name")
+    local links_file="$service_dir/LINKS"
+
+    if [[ -f "$links_file" ]]; then
+        cat "$links_file"
     fi
-    # If no links, outputs nothing
 }

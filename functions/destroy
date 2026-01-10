@@ -29,16 +29,13 @@ temporal:destroy() {
         done
     fi
 
-    # Get database type from global prefixed config
-    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
+    # Get database type from filesystem
     local db_type
-    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
-    local db_type_rc=$?
+    db_type=$(service_info_get "$service_name" "DB_TYPE")
 
-    if [ $db_type_rc -ne 0 ] || [ -z "$db_type" ]; then
-        echo "Warning: [temporal:destroy] Could not determine database type for '$service_name' (checked $service_config_db_type_var)."
-        echo "Will attempt to remove generic service entries, but cannot destroy underlying datastore if its type is unknown."
-        db_type="" # Ensure db_type is empty if not found
+    if [ -z "$db_type" ]; then
+        echo "Warning: [temporal:destroy] Could not determine database type for '$service_name'."
+        echo "Will attempt to remove Temporal containers, but cannot destroy underlying datastore if its type is unknown."
     else
         debug_log "[temporal:destroy] Determined db_type for '$service_name' is '$db_type'."
     fi
@@ -56,15 +53,15 @@ temporal:destroy() {
         fi
     fi
 
-    remove_service "$service_name"
-
-    # Unset the service's specific configuration using config:get to check existence
-    dokku config:get --global "$service_config_db_type_var" >/dev/null 2>&1
-    if [ $? -eq 0 ]; then # If config:get succeeded (var exists)
-        dokku config:unset --global "$service_config_db_type_var"
-        debug_log "[temporal:destroy] Unset global config '$service_config_db_type_var'."
+    # Remove the service directory
+    local service_dir
+    service_dir=$(service_root "$service_name")
+    if [ -d "$service_dir" ]; then
+        echo "Removing service directory..."
+        rm -rf "$service_dir"
+        debug_log "[temporal:destroy] Removed service directory: $service_dir"
     else
-        debug_log "[temporal:destroy] Global config '$service_config_db_type_var' was not set, nothing to unset."
+        debug_log "[temporal:destroy] Service directory did not exist: $service_dir"
     fi
 
     echo "Temporal service '$service_name' destroyed."

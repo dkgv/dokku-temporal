@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+# Create the plugin data directory with proper permissions
+# Use same pattern as config file for consistency
+TEMPORAL_ROOT="${TEMPORAL_ROOT:-$DOKKU_LIB_ROOT/services/temporal}"
+PLUGIN_DATA_ROOT="${PLUGIN_DATA_ROOT:-$TEMPORAL_ROOT}"
+
+if [[ ! -d "$PLUGIN_DATA_ROOT" ]]; then
+    mkdir -p "$PLUGIN_DATA_ROOT"
+    chown dokku:dokku "$PLUGIN_DATA_ROOT"
+    chmod 755 "$PLUGIN_DATA_ROOT"
+fi

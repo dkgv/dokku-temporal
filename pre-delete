@@ -13,23 +13,24 @@ APP="$1"
 
 debug_log "[pre-delete] Hook triggered for app '$APP'"
 
-# Get all linked apps from global config
-linked_apps_raw=$(dokku config:get --global TEMPORAL_LINKED_APPS 2>/dev/null || true)
+# Find all services linked to this app by scanning filesystem
+debug_log "[pre-delete] Checking for Temporal services linked to '$APP'"
 
-if [ -z "$linked_apps_raw" ]; then
-    debug_log "[pre-delete] No Temporal services are linked to any apps"
+services=$(service_list_all)
+
+if [ -z "$services" ]; then
+    debug_log "[pre-delete] No Temporal services exist"
     exit 0
 fi
 
-# Find all services linked to this app
-debug_log "[pre-delete] Checking for Temporal services linked to '$APP'"
-
-echo "$linked_apps_raw" | tr '.' '\n' | while IFS=':' read -r service app_name; do
-    if [ -z "$service" ] || [ -z "$app_name" ]; then
+# Check each service to see if it's linked to this app
+echo "$services" | while IFS= read -r service; do
+    if [ -z "$service" ]; then
         continue
     fi
 
-    if [ "$app_name" = "$APP" ]; then
+    linked_apps=$(get_linked_apps "$service")
+    if echo "$linked_apps" | grep -q "^${APP}$"; then
         echo "Unlinking Temporal service '$service' from app '$APP' (app is being deleted)"
 
         # Remove from linked apps tracking

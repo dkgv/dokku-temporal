@@ -4,20 +4,22 @@ set -eo pipefail
 
 # temporal:list
 temporal:list() {
-    debug_log "[temporal:list] Listing services from TEMPORAL_SERVICES global var."
+    debug_log "[temporal:list] Listing services from filesystem."
+    debug_log "[temporal:list] PLUGIN_DATA_ROOT=$PLUGIN_DATA_ROOT"
     echo "Temporal Services:"
-    local services_list
-    services_list=$(dokku config:get --global TEMPORAL_SERVICES 2>/dev/null || true)
 
-    if [ -z "$services_list" ]; then
+    local services
+    services=$(service_list_all)
+    debug_log "[temporal:list] Services returned: '$services'"
+
+    if [ -z "$services" ]; then
         echo "  No Temporal services configured."
     else
-        # Print each service on a new line
-        echo "$services_list" | tr '.' '\n' | while IFS= read -r service; do
-            if [ -n "$service" ]; then # Handle potential empty lines if string was like "..service"
-                # Optionally, get more info like DB type for each
-                local service_config_db_type_var="TEMPORAL_SERVICE_${service}_DB_TYPE"
-                local db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
+        # Print each service on a new line with db type
+        echo "$services" | while IFS= read -r service; do
+            if [ -n "$service" ]; then
+                local db_type
+                db_type=$(service_info_get "$service" "DB_TYPE")
                 if [ -n "$db_type" ]; then
                     echo "  - $service (db: $db_type)"
                 else

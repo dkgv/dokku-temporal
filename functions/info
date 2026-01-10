@@ -11,24 +11,25 @@ temporal:info() {
         return 1
     fi
 
-    # Check if the service is configured by trying to get its prefixed global config var.
-    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    debug_log "[temporal:info] Checking if service '$service_name' is configured via global var '$service_config_db_type_var'."
-    local db_type_check
-    db_type_check=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
-    local exit_code_config_get=$?
-
-    if [ "$exit_code_config_get" -ne 0 ] || [ -z "$db_type_check" ]; then # Check exit code and if value is empty
-        debug_log "[temporal:info] 'dokku config:get --global $service_config_db_type_var' failed (exit code $exit_code_config_get) or returned empty value ('$db_type_check')."
-        echo "Error: Temporal service '$service_name' does not appear to exist or is not fully configured."
+    # Check if the service exists in filesystem
+    debug_log "[temporal:info] Checking if service '$service_name' exists in filesystem."
+    if ! service_exists "$service_name"; then
+        echo "Error: Temporal service '$service_name' does not exist."
         echo "Hint: Was it created with 'dokku temporal:create $service_name'?"
         return 1
     fi
-    debug_log "[temporal:info] Service '$service_name' exists (found $service_config_db_type_var='$db_type_check')."
+
+    local db_type
+    db_type=$(service_info_get "$service_name" "DB_TYPE")
+    if [ -z "$db_type" ]; then
+        echo "Error: Temporal service '$service_name' is missing DB_TYPE configuration."
+        return 1
+    fi
+    debug_log "[temporal:info] Service '$service_name' exists with db_type='$db_type'."
 
     echo "Temporal Service Information:"
     echo "  Name: $service_name"
-    echo "  Database Type: $db_type_check"
+    echo "  Database Type: $db_type"
 
     local linked_apps
     linked_apps=$(get_linked_apps "$service_name")

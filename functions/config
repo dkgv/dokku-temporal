@@ -14,15 +14,20 @@ temporal:config() {
     
     echo "Temporal Service Configuration:"
     echo "  Service Name: $service_name"
-    
-    # Get database type
-    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    local db_type
-    db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null)
-    
-    if [ -z "$db_type" ]; then
+
+    # Check if service exists
+    if ! service_exists "$service_name"; then
         echo "  Status: Not configured"
         echo "  Hint: Run 'dokku temporal:create $service_name' first"
+        return 1
+    fi
+
+    # Get database type
+    local db_type
+    db_type=$(service_info_get "$service_name" "DB_TYPE")
+
+    if [ -z "$db_type" ]; then
+        echo "  Status: Service exists but missing DB_TYPE"
         return 1
     fi
     
@@ -84,8 +89,7 @@ temporal:config:get() {
     
     case "$key" in
         "db-type")
-            local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-            dokku config:get --global "$service_config_db_type_var" 2>/dev/null || echo "Not configured"
+            service_info_get "$service_name" "DB_TYPE" || echo "Not configured"
             ;;
         "server-address")
             echo "localhost:7233"

@@ -15,10 +15,15 @@ temporal:link() {
     fi
 
     # Check if Temporal service exists
-    local service_config_db_type_var="TEMPORAL_SERVICE_${service_name}_DB_TYPE"
-    local db_type=$(dokku config:get --global "$service_config_db_type_var" 2>/dev/null || true)
-    if [ -z "$db_type" ]; then -ne 0 ] || [ -z "$db_type" ]; then
-        echo "Error: Temporal service '$service_name' not found or not configured."
+    if ! service_exists "$service_name"; then
+        echo "Error: Temporal service '$service_name' does not exist."
+        return 1
+    fi
+
+    local db_type
+    db_type=$(service_info_get "$service_name" "DB_TYPE")
+    if [ -z "$db_type" ]; then
+        echo "Error: Temporal service '$service_name' is missing DB_TYPE configuration."
         return 1
     fi
 

@@ -9,7 +9,10 @@ PLUGIN_SERVICE="temporal"
 
 # Plugin paths
 PLUGIN_CONFIG_ROOT="$PLUGIN_PATH/config"
-PLUGIN_DATA_ROOT="$PLUGIN_PATH/data"
+
+# Set PLUGIN_DATA_ROOT - this is the canonical location for service data
+export TEMPORAL_ROOT=${TEMPORAL_ROOT:="$DOKKU_LIB_ROOT/services/temporal"}
+export PLUGIN_DATA_ROOT=$TEMPORAL_ROOT
 
 # Plugin version
 PLUGIN_VERSION="$(cat "$PLUGIN_PATH/VERSION")"

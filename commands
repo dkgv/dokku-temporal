@@ -13,6 +13,7 @@ export PLUGIN_PATH="$SCRIPT_ROOT_DIR"
 export PLUGIN_COMMAND_PREFIX="temporal" # This must match EXPECTED_PLUGIN_PREFIX below
 
 # Source your plugin's common functions (defines debug_log)
+# Note: PLUGIN_DATA_ROOT is set in config file (sourced by common-functions)
 COMMON_FUNCTIONS_PATH="$PLUGIN_PATH/functions/common"
 
 if [ -f "$COMMON_FUNCTIONS_PATH" ]; then
