@@ -1,7 +1,6 @@
 [plugin]
 name = "temporal"
 description = "Dokku plugin for managing Temporal workflow platform"
-version = "0.1.0" # Ensure this matches the content of your ./VERSION file
 
 [commands]
 # Core lifecycle commands
@@ -31,3 +30,5 @@ unlink = "temporal:unlink"
 
 # Help command (standard practice)
 help = "temporal:help"
+
+[triggers]
