@@ -1,0 +1,260 @@
+#!/usr/bin/env bash
+set -eo pipefail
+[[ $DOKKU_TRACE ]] && set -x
+
+# temporal:namespace:create <service_name> <namespace_name> [--retention=60d]
+temporal:namespace:create() {
+    local service_name="$1"
+    local namespace_name="$2"
+    local retention="60d"
+    shift 2
+
+    debug_log "[temporal:namespace:create] Called for service '$service_name', namespace '$namespace_name'"
+
+    # Validate service name
+    if ! validate_service_name "$service_name" "namespace:create"; then
+        return 1
+    fi
+
+    # Validate namespace name
+    if [ -z "$namespace_name" ]; then
+        echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:namespace:create <service_name> <namespace_name> [--retention=60d]"
+        return 1
+    fi
+
+    # Parse optional --retention flag
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --retention=*)
+                retention="${1#*=}"
+                shift
+                ;;
+            --retention)
+                retention="$2"
+                shift 2
+                ;;
+            *)
+                echo "Error: Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Validate retention format (e.g., 30d, 720h, 43200m, 2592000s)
+    if [[ ! "$retention" =~ ^[0-9]+(d|h|s|m)$ ]]; then
+        echo "Error: Invalid retention format '$retention'."
+        echo "Valid formats: 30d (days), 720h (hours), 43200m (minutes), 2592000s (seconds)"
+        return 1
+    fi
+
+    # Check if service exists
+    if ! service_exists "$service_name"; then
+        echo "Error: Temporal service '$service_name' does not exist."
+        echo "Create it with: dokku $PLUGIN_COMMAND_PREFIX:create $service_name"
+        return 1
+    fi
+
+    # Check if namespace already exists
+    if namespace_exists "$service_name" "$namespace_name"; then
+        echo "Error: Namespace '$namespace_name' already exists for service '$service_name'."
+        echo "Use 'dokku $PLUGIN_COMMAND_PREFIX:namespace:list $service_name' to see all namespaces."
+        return 1
+    fi
+
+    # Check if service is running
+    local container_name="temporal-server-$service_name"
+    if ! docker ps --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        echo "Error: Temporal service '$service_name' is not running."
+        echo "Start it with: dokku $PLUGIN_COMMAND_PREFIX:start $service_name"
+        return 1
+    fi
+
+    echo "Creating namespace '$namespace_name' with retention '$retention'..."
+
+    # Get container IP address
+    local container_ip
+    container_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" | head -n1)
+    debug_log "[temporal:namespace:create] Container IP: $container_ip"
+
+    # Execute temporal CLI command to create namespace
+    local output
+    output=$(docker exec "$container_name" temporal operator namespace create \
+        --namespace "$namespace_name" \
+        --retention "$retention" \
+        --address "${container_ip}:7233" 2>&1)
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to create namespace in Temporal."
+        echo "Details: $output"
+        return 1
+    fi
+
+    # Store namespace metadata
+    namespace_info_set "$service_name" "$namespace_name" "$retention"
+
+    echo "Successfully created namespace '$namespace_name' for service '$service_name'."
+    return 0
+}
+
+# temporal:namespace:list <service_name>
+temporal:namespace:list() {
+    local service_name="$1"
+    debug_log "[temporal:namespace:list] Called for service '$service_name'"
+
+    # Validate service name
+    if ! validate_service_name "$service_name" "namespace:list"; then
+        return 1
+    fi
+
+    # Check if service exists
+    if ! service_exists "$service_name"; then
+        echo "Error: Temporal service '$service_name' does not exist."
+        return 1
+    fi
+
+    # Check if service is running
+    local container_name="temporal-server-$service_name"
+    if ! docker ps --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        echo "Error: Temporal service '$service_name' is not running."
+        echo "Start it with: dokku $PLUGIN_COMMAND_PREFIX:start $service_name"
+        return 1
+    fi
+
+    echo "Namespaces for service '$service_name':"
+    echo ""
+
+    # Get container IP address
+    local container_ip
+    container_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" | head -n1)
+    debug_log "[temporal:namespace:list] Container IP: $container_ip"
+
+    # Get list from Temporal
+    local temporal_output
+    temporal_output=$(docker exec "$container_name" temporal operator namespace list --address "${container_ip}:7233" 2>&1)
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to list namespaces from Temporal."
+        echo "Details: $temporal_output"
+        return 1
+    fi
+
+    # Parse output and show with retention info
+    # The output format shows "NamespaceInfo.Name" followed by the actual namespace name
+    echo "$temporal_output" | grep "NamespaceInfo.Name" | awk '{print $NF}' | while read -r name; do
+        # Skip empty lines
+        if [ -z "$name" ]; then
+            continue
+        fi
+
+        # Get retention from filesystem metadata
+        local retention
+        retention=$(namespace_info_get "$service_name" "$name" "RETENTION")
+        if [ -z "$retention" ]; then
+            retention="unknown"
+        fi
+
+        echo "  - $name (retention: $retention)"
+    done
+
+    return 0
+}
+
+# temporal:namespace:delete <service_name> <namespace_name> [--force]
+temporal:namespace:delete() {
+    local service_name="$1"
+    local namespace_name="$2"
+    local force=false
+    shift 2
+
+    debug_log "[temporal:namespace:delete] Called for service '$service_name', namespace '$namespace_name'"
+
+    # Validate service name
+    if ! validate_service_name "$service_name" "namespace:delete"; then
+        return 1
+    fi
+
+    # Validate namespace name
+    if [ -z "$namespace_name" ]; then
+        echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:namespace:delete <service_name> <namespace_name> [--force]"
+        return 1
+    fi
+
+    # Parse optional --force flag
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --force)
+                force=true
+                shift
+                ;;
+            *)
+                echo "Error: Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
+
+    # Check if service exists
+    if ! service_exists "$service_name"; then
+        echo "Error: Temporal service '$service_name' does not exist."
+        return 1
+    fi
+
+    # Check if namespace exists
+    if ! namespace_exists "$service_name" "$namespace_name"; then
+        echo "Error: Namespace '$namespace_name' does not exist for service '$service_name'."
+        echo "Available namespaces:"
+        namespace_list_all "$service_name" | sed 's/^/  - /'
+        return 1
+    fi
+
+    # Protect default namespace
+    if [[ "$namespace_name" == "default" ]]; then
+        echo "Error: Cannot delete the 'default' namespace."
+        return 1
+    fi
+
+    # Check if service is running
+    local container_name="temporal-server-$service_name"
+    if ! docker ps --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        echo "Error: Temporal service '$service_name' is not running."
+        echo "Start it with: dokku $PLUGIN_COMMAND_PREFIX:start $service_name"
+        return 1
+    fi
+
+    # Prompt for confirmation unless --force
+    if [[ "$force" == false ]]; then
+        echo "Warning: Deleting namespace '$namespace_name' will remove all workflow history."
+        echo "Type 'yes' to confirm: "
+        read -r confirmation
+        if [[ "$confirmation" != "yes" ]]; then
+            echo "Deletion cancelled."
+            return 0
+        fi
+    fi
+
+    echo "Deleting namespace '$namespace_name'..."
+
+    # Get container IP address
+    local container_ip
+    container_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$container_name" | head -n1)
+    debug_log "[temporal:namespace:delete] Container IP: $container_ip"
+
+    # Execute temporal CLI command to delete namespace
+    local output
+    output=$(docker exec "$container_name" temporal operator namespace delete \
+        --namespace "$namespace_name" \
+        --yes \
+        --address "${container_ip}:7233" 2>&1)
+
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to delete namespace from Temporal."
+        echo "Details: $output"
+        return 1
+    fi
+
+    # Remove namespace metadata
+    namespace_info_delete "$service_name" "$namespace_name"
+
+    echo "Successfully deleted namespace '$namespace_name' from service '$service_name'."
+    return 0
+}

@@ -38,28 +38,34 @@ dokku plugin:uninstall temporal
 dokku temporal:create my-temporal
 dokku temporal:start my-temporal
 
+# Create namespaces (optional)
+dokku temporal:namespace:create my-temporal production --retention=90d
+
+# Link to app
+dokku temporal:link my-temporal my-app --namespace=production
+
 # Access points:
 # - Server (gRPC): localhost:7233
 # - Web UI: http://localhost:8080 (local) or SSH tunnel (remote)
-
-# Link to app
-dokku temporal:link my-temporal my-app
 ```
 
 ## Commands
 
 ```
-create <service> [db-type] [--db-service=existing_service]     Create Temporal service (postgres/mysql) or use existing database
-start <service>               Start service (server + Web UI)
-stop <service>                Stop service
-restart <service>             Restart service
-upgrade <service> [--version=<version>]                      Upgrade Temporal to latest or specific version
-info <service>                Show service information
-list                          List all services
-link <service> <app>          Link service to app (sets TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE)
-unlink <service> <app>        Unlink service from app
-logs <service> [--db]         Show logs (add --db for database logs)
-destroy <service> [--force]   Destroy service
+create <service> [db-type] [--db-service=existing_service]       Create Temporal service (postgres/mysql) or use existing database
+start <service>                 Start service (server + Web UI)
+stop <service>                  Stop service
+restart <service>               Restart service
+upgrade <service> [--version=<version>]                        Upgrade Temporal to latest or specific version
+info <service>                  Show service information
+list                            List all services
+link <service> <app> [--namespace=<name>]                      Link service to app (sets TEMPORAL_ADDRESS, TEMPORAL_NAMESPACE)
+unlink <service> <app>          Unlink service from app
+namespace:create <service> <name> [--retention=60d]            Create namespace (default: 60d retention)
+namespace:list <service>        List all namespaces
+namespace:delete <service> <name> [--force]                    Delete namespace
+logs <service> [--db]           Show logs (add --db for database logs)
+destroy <service> [--force]     Destroy service
 ```
 
 ## Security
@@ -119,24 +125,11 @@ DOKKU_TRACE=1 dokku temporal:create my-temporal
 ## Examples
 
 ```bash
-# Basic usage
-dokku temporal:create prod-temporal
-dokku temporal:start prod-temporal
-dokku temporal:link prod-temporal my-app
-dokku apps:restart my-app
-
 # Using existing database
 dokku postgres:create my-existing-db
 dokku temporal:create my-temporal postgres --db-service=my-existing-db
-dokku temporal:start my-temporal
 
-# Monitor via SSH tunnel:
-ssh -L 8080:localhost:8080 deploy@prod-server.com
-
-# Upgrade to latest version
-dokku temporal:upgrade prod-temporal
-
-# Upgrade to specific version  
+# Upgrade to specific version
 dokku temporal:upgrade prod-temporal --version=1.22.0
 ```
 
@@ -150,5 +143,5 @@ dokku temporal:upgrade prod-temporal --version=1.22.0
 Environment variables set on linked apps:
 ```
 TEMPORAL_ADDRESS=<server-ip>:7233
-TEMPORAL_NAMESPACE=default
+TEMPORAL_NAMESPACE=default  # or custom namespace via --namespace flag
 ```

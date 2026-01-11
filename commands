@@ -49,6 +49,9 @@ temporal() {
         config|config:get|config:set|config:web-ui|config:prometheus|config:grafana)
             file_to_source_basename="config"
             ;;
+        namespace:create|namespace:list|namespace:delete|namespace)
+            file_to_source_basename="namespace"
+            ;;
         help) # If you have a specific 'help' function in functions/help
             file_to_source_basename="help"
             ;;

@@ -2,15 +2,35 @@
 set -eo pipefail
 [[ $DOKKU_TRACE ]] && set -x
 
-# temporal:link <service_name> <app_name>
+# temporal:link <service_name> <app_name> [--namespace=<name>]
 temporal:link() {
     local service_name="$1"
     local app_name="$2"
+    local namespace="default"
+    shift 2
     debug_log "[temporal:link] Called for service '$service_name', app '$app_name'."
+
+    # Parse optional --namespace flag
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --namespace=*)
+                namespace="${1#*=}"
+                shift
+                ;;
+            --namespace)
+                namespace="$2"
+                shift 2
+                ;;
+            *)
+                echo "Error: Unknown option: $1"
+                return 1
+                ;;
+        esac
+    done
 
     if ! validate_service_name "$service_name" "link"; then return 1; fi
     if [ -z "$app_name" ]; then
-        echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:link <service_name> <app_name>"
+        echo "Usage: dokku $PLUGIN_COMMAND_PREFIX:link <service_name> <app_name> [--namespace=<name>]"
         return 1
     fi
 
@@ -33,7 +53,19 @@ temporal:link() {
         return 1
     fi
 
-    echo "Linking Temporal service '$service_name' (type: $db_type) to app '$app_name'..."
+    # Validate namespace exists if not default
+    if [[ "$namespace" != "default" ]]; then
+        if ! namespace_exists "$service_name" "$namespace"; then
+            echo "Error: Namespace '$namespace' does not exist for service '$service_name'."
+            echo "Available namespaces:"
+            namespace_list_all "$service_name" | sed 's/^/  - /'
+            echo ""
+            echo "Create it with: dokku $PLUGIN_COMMAND_PREFIX:namespace:create $service_name $namespace"
+            return 1
+        fi
+    fi
+
+    echo "Linking Temporal service '$service_name' (type: $db_type) to app '$app_name' with namespace '$namespace'..."
 
     # Get connection info for the underlying datastore
     # This uses the get_db_connection_info from common.sh
@@ -64,7 +96,7 @@ temporal:link() {
     echo "Setting environment variables on app '$app_name'..."
     dokku config:set --no-restart "$app_name" \
         "TEMPORAL_ADDRESS=$temporal_address" \
-        "TEMPORAL_NAMESPACE=default" # Or make namespace configurable
+        "TEMPORAL_NAMESPACE=$namespace"
 
     # Link the underlying datastore (e.g., postgres) to the app if Temporal SDKs need it directly
     # OR if the app itself is a Temporal worker/client that configures its own DB connection
