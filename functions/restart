@@ -6,9 +6,19 @@ set -eo pipefail
 
 temporal:restart() {
     local service_name="$1"
-    
+
     if ! validate_service_name "$service_name" "restart"; then
         return 1
+    fi
+
+    # Source the stop function if not already loaded
+    if ! type temporal:stop &>/dev/null; then
+        . "$PLUGIN_PATH/functions/stop"
+    fi
+
+    # Source the start function if not already loaded
+    if ! type temporal:start &>/dev/null; then
+        . "$PLUGIN_PATH/functions/start"
     fi
 
     temporal:stop "$service_name"
