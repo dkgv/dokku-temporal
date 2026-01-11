@@ -71,43 +71,36 @@ temporal:start() {
         return 1
     fi
 
-    # 4. Find the correct network for the PostgreSQL container
-    local db_network=""
-    local networks
-    networks=$(docker inspect "$db_container_name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
-    
-    debug_log "PostgreSQL container networks: $networks"
-    
-    if [ -n "$networks" ]; then
-        # Prefer custom networks over default bridge network
-        # Dokku services typically use custom networks where DNS aliases work properly
-        for net in $networks; do
-            if [ "$net" != "bridge" ] && [ "$net" != "none" ] && [ "$net" != "host" ]; then
-                db_network="$net"
-                echo "✓ Using custom network: $db_network"
-                break
-            fi
-        done
-        
-        # If no custom network found, fall back to first network (likely bridge)
-        if [ -z "$db_network" ]; then
-            db_network=$(echo "$networks" | awk '{print $1}')
-            echo "⚠ Using default network: $db_network (no custom network found)"
+    # 4. Use the temporal-network that was created during temporal:create
+    local temporal_network="temporal-network"
+
+    # Verify the network exists
+    if ! docker network inspect "$temporal_network" >/dev/null 2>&1; then
+        echo "Error: Network '$temporal_network' does not exist!"
+        echo "This should have been created during 'temporal:create'. Creating it now..."
+        if docker network create "$temporal_network"; then
+            echo "✓ Created network: $temporal_network"
+        else
+            echo "✗ Failed to create network '$temporal_network'"
+            return 1
         fi
     else
-        echo "Warning: Could not determine network for container '$db_container_name'"
-        echo "Available networks:"
-        docker network ls
-        echo "Defaulting to 'bridge' network"
-        db_network="bridge"
+        echo "✓ Using Temporal network: $temporal_network"
     fi
 
-    # 5. Verify the network exists
-    if ! docker network inspect "$db_network" >/dev/null 2>&1; then
-        echo "Error: Network '$db_network' does not exist!"
-        echo "Available networks:"
-        docker network ls
-        return 1
+    # Connect the PostgreSQL container to the temporal network if not already connected
+    local db_networks
+    db_networks=$(docker inspect "$db_container_name" --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null)
+
+    if ! echo "$db_networks" | grep -q "$temporal_network"; then
+        echo "Connecting PostgreSQL container to $temporal_network..."
+        if docker network connect "$temporal_network" "$db_container_name" 2>/dev/null; then
+            echo "✓ PostgreSQL connected to $temporal_network"
+        else
+            echo "⚠ Could not connect PostgreSQL to $temporal_network (may already be connected)"
+        fi
+    else
+        echo "✓ PostgreSQL already on $temporal_network"
     fi
 
     # 6. Get DB connection details
@@ -176,53 +169,59 @@ temporal:start() {
         echo "✓ PostgreSQL container is running"
     fi
 
-    # 8. Get the actual internal IP of the postgres container
+    # 8. Get the actual internal IP of the postgres container on the temporal network
     echo ""
-    echo "Getting PostgreSQL container IP address..."
-    
+    echo "Getting PostgreSQL container IP address on $temporal_network..."
+
     local db_internal_ip
-    db_internal_ip=$(docker inspect "$db_container_name" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null)
-    
+    # Use index function to access network by variable name
+    db_internal_ip=$(docker inspect "$db_container_name" -f "{{(index .NetworkSettings.Networks \"${temporal_network}\").IPAddress}}" 2>/dev/null)
+
+    if [ -z "$db_internal_ip" ]; then
+        echo "⚠ Could not get IP on $temporal_network, trying any network..."
+        db_internal_ip=$(docker inspect "$db_container_name" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 2>/dev/null | head -1)
+    fi
+
     if [ -z "$db_internal_ip" ]; then
         echo "✗ Could not determine internal IP of PostgreSQL container"
         return 1
     fi
-    
+
     echo "✓ PostgreSQL internal IP: $db_internal_ip"
 
-    # 9. Test database connectivity using internal IP (most reliable on bridge network)
+    # 9. Test database connectivity using container name (DNS on custom network)
     echo ""
-    echo "Testing database connectivity using internal IP..."
-    
+    echo "Testing database connectivity using container name DNS..."
+
     local test_successful=false
     local final_db_host=""
     local error_details=""
-    
-    # Test with internal IP first (most reliable on bridge network)
-    echo "Testing internal IP: $db_internal_ip"
-    error_details=$(docker run --rm --network "$db_network" postgres:13 \
-        pg_isready -h "$db_internal_ip" -p "$DB_PORT" -U "$DB_USER" 2>&1)
+
+    # Test with container name first (DNS works on custom networks)
+    echo "Testing container name: $db_container_name"
+    error_details=$(docker run --rm --network "$temporal_network" postgres:13 \
+        pg_isready -h "$db_container_name" -p "$DB_PORT" -U "$DB_USER" 2>&1)
     if [ $? -eq 0 ]; then
-        echo "✓ Database reachable using internal IP: $db_internal_ip:$DB_PORT"
-        final_db_host="$db_internal_ip"
+        echo "✓ Database reachable using container name: $db_container_name:$DB_PORT"
+        final_db_host="$db_container_name"
         test_successful=true
     else
-        echo "⚠ Internal IP failed: $error_details"
-        
-        # Fallback to container name (less likely to work on bridge)
-        echo "Trying container name as fallback..."
-        error_details=$(docker run --rm --network "$db_network" postgres:13 \
-            pg_isready -h "$db_container_name" -p "$DB_PORT" -U "$DB_USER" 2>&1)
+        echo "⚠ Container name failed: $error_details"
+
+        # Fallback to internal IP
+        echo "Trying internal IP as fallback..."
+        error_details=$(docker run --rm --network "$temporal_network" postgres:13 \
+            pg_isready -h "$db_internal_ip" -p "$DB_PORT" -U "$DB_USER" 2>&1)
         if [ $? -eq 0 ]; then
-            echo "✓ Database reachable using container name: $db_container_name:$DB_PORT"
-            final_db_host="$db_container_name"
+            echo "✓ Database reachable using internal IP: $db_internal_ip:$DB_PORT"
+            final_db_host="$db_internal_ip"
             test_successful=true
         else
-            echo "⚠ Container name also failed: $error_details"
-            
+            echo "⚠ Internal IP also failed: $error_details"
+
             # Last resort: try DSN hostname
             echo "Trying DSN hostname as last resort..."
-            error_details=$(docker run --rm --network "$db_network" postgres:13 \
+            error_details=$(docker run --rm --network "$temporal_network" postgres:13 \
                 pg_isready -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" 2>&1)
             if [ $? -eq 0 ]; then
                 echo "✓ Database reachable using DSN hostname: $DB_HOST:$DB_PORT"
@@ -239,9 +238,9 @@ temporal:start() {
         echo ""
         echo "Detailed diagnostics:"
         echo "  Container: $db_container_name"
-        echo "  Status: $container_status" 
+        echo "  Status: $container_status"
         echo "  Internal IP: $db_internal_ip"
-        echo "  Network: $db_network"
+        echo "  Network: $temporal_network"
         echo "  DSN hostname: $DB_HOST:$DB_PORT"
         echo "  Last error: $error_details"
         echo ""
@@ -295,14 +294,14 @@ temporal:start() {
     echo ""
     echo "Starting Temporal server..."
     echo "  Container: $container_name"
-    echo "  Network: $db_network"
+    echo "  Network: $temporal_network"
     echo "  Database: $DB_HOST:$DB_PORT/$DB_NAME"
     echo ""
 
     local docker_output
     docker_output=$(docker run -d \
         --name "$container_name" \
-        --network "$db_network" \
+        --network "$temporal_network" \
         -p "7233:7233" \
         -p "7234:7234" \
         -p "7235:7235" \
@@ -348,7 +347,7 @@ temporal:start() {
             local ui_docker_output
             ui_docker_output=$(docker run -d \
                 --name "$ui_container_name" \
-                --network "$db_network" \
+                --network "$temporal_network" \
                 -p "8080:8080" \
                 -e "TEMPORAL_ADDRESS=$temporal_server_ip:7233" \
                 -e "TEMPORAL_CORS_ORIGINS=http://localhost:8080" \
@@ -381,7 +380,7 @@ temporal:start() {
                 echo "  • Temporal Server (gRPC): localhost:7233"
                 echo ""
                 echo "You can try starting the UI manually:"
-                echo "  docker run -d --name temporal-ui-$service_name --network $db_network -p 8080:8080 -e TEMPORAL_ADDRESS=$temporal_server_ip:7233 temporalio/ui:latest"
+                echo "  docker run -d --name temporal-ui-$service_name --network $temporal_network -p 8080:8080 -e TEMPORAL_ADDRESS=$temporal_server_ip:7233 temporalio/ui:latest"
                 echo ""
                 echo "Monitor startup progress with:"
                 echo "  dokku temporal:logs $service_name"

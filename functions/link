@@ -90,8 +90,32 @@ temporal:link() {
     # Standard Dokku practice is to link the *datastore* to the app,
     # then the app uses that to connect to Temporal, which then connects to the datastore.
     # Or, if Temporal server is also a "service" for the app:
-    local dokku_host_ip=$(dokku config:get --global DOKKU_HOSTNAME || hostname -I | awk '{print $1}') # Simplistic
-    local temporal_address="$dokku_host_ip:7233" # Assuming default port and direct host access after 'start'
+
+    # Use the Docker container name for internal networking
+    # This allows the app container to reach Temporal via Docker's DNS
+    local container_name="temporal-server-$service_name"
+    local temporal_address="$container_name:7233"
+
+    # Ensure the Temporal server container exists and is running
+    if ! docker ps --filter "name=^${container_name}$" --format "{{.Names}}" | grep -q "^${container_name}$"; then
+        echo "Warning: Temporal server container '$container_name' is not running."
+        echo "Please start it with: dokku $PLUGIN_COMMAND_PREFIX:start $service_name"
+    fi
+
+    # Use the temporal-network that was created during temporal:create
+    local temporal_network="temporal-network"
+
+    # Verify the network exists
+    if ! docker network inspect "$temporal_network" >/dev/null 2>&1; then
+        echo "Error: Network '$temporal_network' does not exist!"
+        echo "Please create the service first with: dokku $PLUGIN_COMMAND_PREFIX:create $service_name"
+        return 1
+    fi
+
+    # Use Dokku's native network management to attach app to temporal-network
+    # attach-post-create ensures network is connected before app starts
+    echo "Configuring app to use temporal-network..."
+    dokku network:set "$app_name" attach-post-create "$temporal_network"
 
     echo "Setting environment variables on app '$app_name'..."
     dokku config:set --no-restart "$app_name" \
