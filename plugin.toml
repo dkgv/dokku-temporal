@@ -1,32 +1,5 @@
 [plugin]
 name = "temporal"
 description = "Dokku plugin for managing Temporal workflow platform"
-
-[commands]
-# Core lifecycle commands
-create = "temporal:create"
-destroy = "temporal:destroy"
-start = "temporal:start"
-stop = "temporal:stop"
-restart = "temporal:restart"
-upgrade = "temporal:upgrade"
-
-# Information and listing
-info = "temporal:info"
-list = "temporal:list"
-logs = "temporal:logs"
-
-# Linking
-link = "temporal:link"
-unlink = "temporal:unlink"
-
-# Configuration commands (keys with colons MUST be quoted)
-"config" = "temporal:config"
-"config:get" = "temporal:config:get"
-"config:set" = "temporal:config:set"
-"config:web-ui" = "temporal:config:web-ui"
-"config:prometheus" = "temporal:config:prometheus"
-"config:grafana" = "temporal:config:grafana"
-
-# Help command (standard practice)
-help = "temporal:help"
+version = "0.1.0"
+[plugin.config]
