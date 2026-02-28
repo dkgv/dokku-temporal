@@ -30,5 +30,3 @@ unlink = "temporal:unlink"
 
 # Help command (standard practice)
 help = "temporal:help"
-
-[triggers]
