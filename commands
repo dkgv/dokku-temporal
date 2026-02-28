@@ -106,18 +106,18 @@ EXPECTED_PLUGIN_PREFIX="temporal:" # Must match PLUGIN_COMMAND_PREFIX
 
 debug_log "[./commands main] Script invoked. COMMAND_FROM_DOKKU='$COMMAND_FROM_DOKKU', All ARGS='$*'"
 
-if [[ "$COMMAND_FROM_DOKKU" == ${EXPECTED_PLUGIN_PREFIX}* ]]; then
-    # This is a command for our 'temporal' plugin
-    SUBCOMMAND_FOR_PLUGIN_FUNCTION="${COMMAND_FROM_DOKKU#$EXPECTED_PLUGIN_PREFIX}" # Extracts "info", "create", "config:get"
-    shift # Remove "temporal:subcommand" from $@, leaving only args for the subcommand
+# Guard clause: only handle temporal commands, otherwise exit
+[[ " help ${PLUGIN_COMMAND_PREFIX}:help ${PLUGIN_COMMAND_PREFIX} " == *" $COMMAND_FROM_DOKKU "* ]] || [[ "$COMMAND_FROM_DOKKU" == ${EXPECTED_PLUGIN_PREFIX}* ]] || exit 10
+
+if [[ "$COMMAND_FROM_DOKKU" == "help" ]] || [[ "$COMMAND_FROM_DOKKU" == "${PLUGIN_COMMAND_PREFIX}" ]] || [[ "$COMMAND_FROM_DOKKU" == "${PLUGIN_COMMAND_PREFIX}:help" ]]; then
+    # Show help for: "dokku help", "dokku temporal", "dokku temporal:help"
+    temporal "help" "$@"
+    exit $?
+elif [[ "$COMMAND_FROM_DOKKU" == ${EXPECTED_PLUGIN_PREFIX}* ]]; then
+    SUBCOMMAND_FOR_PLUGIN_FUNCTION="${COMMAND_FROM_DOKKU#$EXPECTED_PLUGIN_PREFIX}"
+    shift
 
     debug_log "[./commands main] Dispatching to temporal() with SUBCOMMAND='$SUBCOMMAND_FOR_PLUGIN_FUNCTION' and ARGS='$*'"
-    temporal "$SUBCOMMAND_FOR_PLUGIN_FUNCTION" "$@" # Call the main 'temporal' function defined above
-    exit $? # Exit with the status from the temporal() function
-else
-    # This script was called by Dokku's loop for a command not prefixed with "temporal:"
-    # (e.g., during a generic trigger like 'help' or if another plugin tried to call it)
-    # Exit with 10 (DOKKU_NOT_IMPLEMENTED_EXIT) to tell Dokku this plugin doesn't handle this call.
-    debug_log "[./commands main] Command '$COMMAND_FROM_DOKKU' is not for this plugin. Exiting with 10."
-    exit 10
+    temporal "$SUBCOMMAND_FOR_PLUGIN_FUNCTION" "$@"
+    exit $?
 fi
